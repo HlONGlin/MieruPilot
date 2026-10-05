@@ -1,473 +1,59 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>merit · mieru 节点管理</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>merit · 节点控制台</title>
 <style>
-  :root {
-    --bg: #0e1116;
-    --panel: #161b22;
-    --panel2: #1c2230;
-    --border: #2a3242;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --accent: #3b82f6;
-    --accent2: #2563eb;
-    --green: #2ea043;
-    --red: #f85149;
-    --yellow: #d29922;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    font-size: 14px; line-height: 1.5;
-  }
-  a { color: var(--accent); text-decoration: none; }
-  .center { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-  .card {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    padding: 24px; width: 100%; max-width: 380px;
-  }
-  .card h1 { margin: 0 0 4px; font-size: 20px; }
-  .card p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
-  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
-  input, select {
-    width: 100%; padding: 9px 11px; background: var(--bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 8px; font-size: 14px; outline: none;
-  }
-  input:focus, select:focus { border-color: var(--accent); }
-  button {
-    cursor: pointer; border: 1px solid var(--border); background: var(--panel2); color: var(--text);
-    padding: 8px 14px; border-radius: 8px; font-size: 13px; transition: .15s;
-  }
-  button:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent2); border-color: var(--accent2); }
-  button.primary:hover { background: var(--accent); }
-  button.danger { color: var(--red); }
-  button.small { padding: 4px 9px; font-size: 12px; }
-  .full { width: 100%; margin-top: 20px; padding: 10px; font-size: 15px; }
-
-  header {
-    display: flex; align-items: center; gap: 18px; padding: 14px 22px;
-    background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
-  }
-  header .logo { font-weight: 700; font-size: 16px; }
-  header .logo span { color: var(--accent); }
-  header nav { display: flex; gap: 6px; }
-  header nav a { padding: 6px 12px; border-radius: 8px; color: var(--muted); }
-  header nav a.active, header nav a:hover { background: var(--panel2); color: var(--text); }
-  header .spacer { flex: 1; }
-  main { max-width: 1080px; margin: 0 auto; padding: 22px; }
-
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-  .node {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px;
-    cursor: pointer; transition: .15s;
-  }
-  .node:hover { border-color: var(--accent); transform: translateY(-2px); }
-  .node .top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .node .name { font-weight: 600; font-size: 15px; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
-  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
-  .dot.run { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-  .meta { color: var(--muted); font-size: 12px; }
-  .meta div { margin-top: 3px; }
-
-  .section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
-  .section h2 { margin: 0 0 14px; font-size: 16px; }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
-  .row > div { flex: 1; min-width: 120px; }
-  .row .btn-col { flex: none; }
-  code, .mono {
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    padding: 2px 6px; font-size: 12.5px; word-break: break-all;
-  }
-  .cmdbox { display: flex; gap: 8px; align-items: stretch; }
-  .cmdbox code { flex: 1; padding: 10px; border-radius: 8px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 500; font-size: 12px; }
-  .pill { display: inline-block; padding: 1px 7px; border-radius: 20px; font-size: 11px; border: 1px solid var(--border); }
-  .pill.tcp { color: #58a6ff; border-color: #1f6feb55; }
-  .pill.udp { color: #d29922; border-color: #d2992255; }
-  .tag { font-size: 11px; color: var(--muted); }
-  .empty { color: var(--muted); text-align: center; padding: 40px; }
-  .toast {
-    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-    background: var(--panel2); border: 1px solid var(--border); padding: 10px 18px;
-    border-radius: 10px; opacity: 0; transition: .25s; pointer-events: none; z-index: 100;
-  }
-  .toast.show { opacity: 1; bottom: 34px; }
-  .err { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 18px; }
-  .muted { color: var(--muted); }
-  .flex-between { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .back { color: var(--muted); margin-bottom: 12px; display: inline-block; }
+:root{--bg:#f4f7fb;--surface:#fff;--surface2:#f8fafc;--line:#e6ebf2;--text:#172033;--muted:#718096;--primary:#4f46e5;--primary2:#4338ca;--green:#0f9f6e;--red:#dc3545;--amber:#c47b05;--shadow:0 10px 30px #2538580d;--radius:16px;color-scheme:light}
+:root[data-theme=dark]{--bg:#0e1420;--surface:#151d2b;--surface2:#1c2636;--line:#2b384d;--text:#edf2f7;--muted:#9aa8ba;--shadow:0 10px 30px #0005;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}button,input,select{font:inherit}button{border:0;cursor:pointer}.hidden{display:none!important}.muted{color:var(--muted)}.danger{color:var(--red)!important}.full{width:100%}
+.auth{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,#e0e7ff,transparent 35%),var(--bg)}.auth-card{width:min(420px,100%);background:var(--surface);padding:38px;border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow)}.brand{font-weight:800;font-size:25px;letter-spacing:-.04em}.brand i{color:var(--primary);font-style:normal}.auth-card h1{margin:28px 0 4px;font-size:25px}.auth-card p{margin:0 0 25px;color:var(--muted)}
+.field{display:grid;gap:6px;margin:14px 0}.field label{font-size:13px;font-weight:600;color:#526071}.field input,.field select{width:100%;padding:11px 13px;background:var(--surface);border:1px solid #dce3ed;border-radius:10px;outline:0;color:var(--text)}.field input:focus,.field select:focus{border-color:var(--primary);box-shadow:0 0 0 3px #4f46e51a}.error{min-height:22px;color:var(--red);font-size:13px}.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 14px;border-radius:10px;background:var(--surface2);color:var(--text);border:1px solid var(--line);font-weight:600;transition:.15s}.btn:hover{border-color:#bbc7da;transform:translateY(-1px)}.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}.btn.primary:hover{background:var(--primary2)}.btn.ghost{background:transparent;border-color:transparent}.btn.small{padding:6px 10px;font-size:12px}
+.layout{min-height:100vh;display:flex}.sidebar{width:250px;flex:none;background:#111827;color:#cbd5e1;padding:24px 15px;display:flex;flex-direction:column}.sidebar .brand{color:#fff;padding:0 12px 34px;display:flex;align-items:center;gap:9px}.sidebar .brand i{color:#818cf8}.logo-mark{display:inline-grid;place-items:center;width:31px;height:31px;border-radius:10px;background:linear-gradient(135deg,#818cf8,#4f46e5);color:#fff;font-size:15px;font-weight:900;box-shadow:0 5px 14px #4f46e566}.nav{display:grid;gap:5px}.nav button{display:flex;align-items:center;gap:12px;text-align:left;color:#94a3b8;background:transparent;padding:12px;border-radius:11px}.nav button:hover,.nav button.active{background:#252d42;color:#fff}.nav svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8}.sidebar-bottom{margin-top:auto;border-top:1px solid #273247;padding-top:14px}.sidebar-bottom button{width:100%;color:#94a3b8;background:transparent;text-align:left;padding:10px 12px;border-radius:10px}.main{min-width:0;flex:1}.topbar{height:72px;background:color-mix(in srgb,var(--surface) 82%,transparent);border-bottom:1px solid var(--line);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:space-between;padding:0 clamp(18px,4vw,48px);position:sticky;top:0;z-index:5}.topbar h1{font-size:20px;margin:0}.top-actions{display:flex;align-items:center;gap:12px}.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}.content{max-width:1400px;margin:auto;padding:clamp(20px,4vw,42px)}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:15px;margin-bottom:25px}.page-head h2{font-size:27px;letter-spacing:-.03em;margin:0 0 4px}.page-head p{margin:0;color:var(--muted)}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}.stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:19px;box-shadow:var(--shadow)}.stat .label{font-size:12px;color:var(--muted)}.stat strong{display:block;font-size:27px;margin-top:8px}.stat em{font-style:normal;font-size:12px;color:var(--green)}.node-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));gap:16px}.node-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);transition:.2s;cursor:pointer}.node-card:hover{transform:translateY(-3px);border-color:#c4c9ff;box-shadow:0 14px 35px #25385818}.node-top{display:flex;gap:11px;align-items:center}.node-icon{width:42px;height:42px;display:grid;place-items:center;background:#eef2ff;border-radius:12px;color:var(--primary);font-weight:800;font-size:18px}.node-title{min-width:0}.node-title strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.node-title small{color:var(--muted)}.state{margin-left:auto;white-space:nowrap;padding:4px 8px;border-radius:99px;background:#eef2f6;color:var(--muted);font-size:11px}.state.on{background:#e7f8f1;color:var(--green)}.state.run{background:#eef2ff;color:var(--primary)}.node-meta{border-top:1px solid var(--line);margin-top:18px;padding-top:14px;color:var(--muted);font-size:12px;display:grid;gap:4px}.empty{background:var(--surface);border:1px dashed #ccd5e2;border-radius:var(--radius);padding:65px 20px;text-align:center;color:var(--muted)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;margin-bottom:17px}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.panel h3{margin:0;font-size:16px}.back{color:var(--muted);border:0;background:transparent;padding:0 0 12px}.toolbar{display:flex;gap:8px;flex-wrap:wrap}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:17px}.form-row{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;align-items:end}.command{display:flex;gap:8px;align-items:stretch}.command code{flex:1;background:#111827;color:#dbeafe;border-radius:10px;padding:12px;white-space:pre-wrap;word-break:break-all;font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:650px}th,td{text-align:left;padding:12px 8px;border-bottom:1px solid var(--line);white-space:nowrap}th{font-size:12px;color:var(--muted);font-weight:600}td code{background:var(--surface2);padding:4px 7px;border-radius:6px;font-size:12px}.pill{padding:3px 8px;border-radius:99px;background:#eef2ff;color:var(--primary);font-size:11px}.pill.off{background:#f1f3f5;color:var(--muted)}
+.modal-back{position:fixed;inset:0;background:#11182766;display:grid;place-items:center;padding:18px;z-index:20}.modal{width:min(500px,100%);max-height:90vh;overflow:auto;background:var(--surface);border-radius:18px;padding:24px;box-shadow:0 22px 60px #11182733}.modal h3{margin:0 0 18px}.modal-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:22px}.toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,20px);opacity:0;background:#172033;color:white;padding:10px 17px;border-radius:10px;z-index:50;transition:.2s;pointer-events:none}.toast.show{opacity:1;transform:translate(-50%,0)}
+@media(max-width:800px){.sidebar{width:68px;padding:18px 9px}.sidebar .brand{padding:0 0 28px;justify-content:center}.sidebar .brand>span:not(.logo-mark){display:none}.nav button{justify-content:center;font-size:0}.nav svg{width:20px;height:20px}.sidebar-bottom button{font-size:0;text-align:center}.topbar{padding:0 18px}.topbar h1{font-size:17px}.content{padding:22px 15px}.stats{grid-template-columns:repeat(2,1fr)}.two-col,.form-row{grid-template-columns:1fr}.page-head{align-items:flex-start;flex-direction:column}.page-head .btn{width:100%}}
+@media(max-width:430px){.auth-card{padding:27px 21px}.stats{gap:9px}.stat{padding:14px}.stat strong{font-size:22px}.top-actions .muted{display:none}}
 </style>
 </head>
-<body>
-<div id="app"></div>
-<div id="toast" class="toast"></div>
-
+<body><div id="app"></div><div id="modal"></div><div id="toast" class="toast"></div>
 <script>
-const app = document.getElementById('app');
-const toastEl = document.getElementById('toast');
-let me = { authenticated: false };
-const panelBase = location.pathname.replace(/\/+$/, '');
-
-function panelURL(path) {
-  return panelBase + path;
-}
-
-function toast(msg) {
-  toastEl.textContent = msg;
-  toastEl.classList.add('show');
-  clearTimeout(toastEl._t);
-  toastEl._t = setTimeout(() => toastEl.classList.remove('show'), 1800);
-}
-
-async function api(method, path, body) {
-  const opt = { method, headers: {} };
-  if (body !== undefined) {
-    opt.headers['Content-Type'] = 'application/json';
-    opt.body = JSON.stringify(body);
-  }
-  const res = await fetch(panelURL(path), opt);
-  const ct = res.headers.get('content-type') || '';
-  const data = ct.includes('application/json') ? await res.json() : await res.text();
-  if (!res.ok) {
-    const err = new Error((data && data.error) || data || ('HTTP ' + res.status));
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
-  return data;
-}
-
-function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[c]));
-}
-
-function copy(text) {
-  navigator.clipboard.writeText(text).then(() => toast('已复制'), () => toast('复制失败'));
-}
-
-function bytesAgo(ts) {
-  if (!ts || ts.startsWith('0001')) return '从未';
-  const d = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-  if (d < 5) return '刚刚';
-  if (d < 60) return d + ' 秒前';
-  if (d < 3600) return Math.floor(d / 60) + ' 分钟前';
-  if (d < 86400) return Math.floor(d / 3600) + ' 小时前';
-  return Math.floor(d / 86400) + ' 天前';
-}
-
-/* ---------- auth screens ---------- */
-function renderLogin() {
-  app.innerHTML = `<div class="center"><div class="card">
-    <h1>merit</h1>
-    <p class="sub">登录以管理 mieru 节点<br><span class="muted">管理员账号只能通过服务器一键管理工具设置或重置。</span></p>
-    <label>用户名</label><input id="u" autocomplete="username">
-    <label>密码</label><input id="p" type="password" autocomplete="current-password">
-    <div class="err" id="e"></div>
-    <button class="primary full" id="go">登录</button>
-  </div></div>`;
-  const submit = async () => {
-    try {
-      await api('POST', '/api/login', {
-        username: document.getElementById('u').value.trim(),
-        password: document.getElementById('p').value,
-      });
-      me.authenticated = true;
-      location.hash = '#/nodes';
-      route();
-    } catch (err) { document.getElementById('e').textContent = err.message; }
-  };
-  document.getElementById('go').onclick = submit;
-  document.getElementById('p').onkeydown = e => { if (e.key === 'Enter') submit(); };
-}
-
-/* ---------- shell ---------- */
-function shell(active, body) {
-  return `<header>
-    <div class="logo">merit<span>.</span></div>
-    <nav>
-      <a href="#/nodes" class="${active === 'nodes' ? 'active' : ''}">节点</a>
-      <a href="#/settings" class="${active === 'settings' ? 'active' : ''}">设置</a>
-    </nav>
-    <div class="spacer"></div>
-    <button class="small" id="logout">退出</button>
-  </header><main id="main">${body}</main>`;
-}
-
-function bindShell() {
-  const b = document.getElementById('logout');
-  if (b) b.onclick = async () => {
-    await api('POST', '/api/logout');
-    me.authenticated = false;
-    location.hash = '';
-    route();
-  };
-}
-
-/* ---------- node list ---------- */
-async function renderNodes() {
-  app.innerHTML = shell('nodes', `<div class="empty">加载中…</div>`);
-  bindShell();
-  const nodes = await api('GET', '/api/nodes');
-  const main = document.getElementById('main');
-  if (!nodes.length) {
-    main.innerHTML = `
-      <div class="flex-between" style="margin-bottom:16px">
-        <h2 style="margin:0">节点</h2>
-        <button class="primary" id="add">+ 添加节点</button>
-      </div>
-      <div class="empty">还没有节点，点击「添加节点」开始</div>`;
-    document.getElementById('add').onclick = addNode;
-    return;
-  }
-  main.innerHTML = `
-    <div class="flex-between" style="margin-bottom:16px">
-      <h2 style="margin:0">节点（${nodes.length}）</h2>
-      <button class="primary" id="add">+ 添加节点</button>
-    </div>
-    <div class="grid">${nodes.map(nodeCard).join('')}</div>`;
-  document.getElementById('add').onclick = addNode;
-  nodes.forEach(n => {
-    document.getElementById('node-' + n.id).onclick = () => { location.hash = '#/node/' + n.id; };
-  });
-}
-
-function nodeCard(n) {
-  const dot = n.online ? 'on' : (n.registered ? 'run' : '');
-  const state = !n.registered ? '未部署' : (n.online ? (n.mitaRunning ? '运行中' : '在线·未启动') : '离线');
-  const addr = n.address || n.seenIP || '未获取地址';
-  const enabled = (n.ports || []).filter(p => p.enabled).length;
-  return `<div class="node" id="node-${n.id}">
-    <div class="top"><span class="dot ${dot}"></span><span class="name">${esc(n.name)}</span>
-      <span class="tag" style="margin-left:auto">${state}</span></div>
-    <div class="meta">
-      <div>地址：${esc(addr)}</div>
-      <div>端口：${enabled} 个启用 / ${(n.ports || []).length} 个</div>
-      <div>最后在线：${bytesAgo(n.lastSeen)}</div>
-      ${n.lastError ? `<div style="color:var(--red)">错误：${esc(n.lastError)}</div>` : ''}
-    </div>
-  </div>`;
-}
-
-async function addNode() {
-  const name = prompt('节点名称（例如 hk-1）');
-  if (!name) return;
-  try {
-    const n = await api('POST', '/api/nodes', { name });
-    location.hash = '#/node/' + n.id;
-  } catch (err) { toast(err.message); }
-}
-
-/* ---------- node detail ---------- */
-async function renderNode(id) {
-  app.innerHTML = shell('nodes', `<div class="empty">加载中…</div>`);
-  bindShell();
-  let n;
-  try { n = await api('GET', '/api/nodes/' + id); }
-  catch (err) { document.getElementById('main').innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
-
-  const install = await api('GET', '/api/nodes/' + id + '/install');
-  const links = await api('GET', '/api/nodes/' + id + '/links');
-  const linkMap = {};
-  links.forEach(l => { linkMap[l.id] = l.link; });
-
-  const dot = n.online ? 'on' : (n.registered ? 'run' : '');
-  const state = !n.registered ? '未部署' : (n.online ? (n.mitaRunning ? '运行中' : '在线·未启动') : '离线');
-
-  document.getElementById('main').innerHTML = `
-    <a class="back" href="#/nodes">← 返回节点列表</a>
-    <div class="flex-between" style="margin-bottom:16px">
-      <h2 style="margin:0;display:flex;align-items:center;gap:10px">
-        <span class="dot ${dot}"></span>${esc(n.name)}
-        <span class="tag">${state}</span>
-      </h2>
-      <button class="danger small" id="delNode">删除节点</button>
-    </div>
-
-    <div class="section">
-      <h2>① 部署 Agent</h2>
-      <p class="muted" style="margin-top:-6px">在目标服务器上以 root 执行下面这条命令，Agent 会自动安装 mita 并连接面板：</p>
-      <div class="cmdbox">
-        <code id="cmd">${esc(install.command)}</code>
-        <button id="copyCmd">复制</button>
-      </div>
-      <div class="row" style="margin-top:14px">
-        <div><label>公网地址 / IP（留空自动探测）</label>
-          <input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || '自动探测')}"></div>
-        <div><label>域名（可选，用于分享链接）</label>
-          <input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div>
-        <div class="btn-col"><button class="primary" id="saveNode">保存</button></div>
-      </div>
-      <div class="meta" style="margin-top:10px">
-        系统：${esc(n.os || '—')} · 架构：${esc(n.arch || '—')} · Mita：${esc(n.mitaVer || '—')} ·
-        Agent：${esc(n.agentVer || '—')} · 最后在线：${bytesAgo(n.lastSeen)}
-      </div>
-    </div>
-
-    <div class="section">
-      <h2>② 生成节点（只需填端口）</h2>
-      <div class="row">
-        <div style="max-width:160px"><label>端口（1025-65535）</label><input id="port" type="number" placeholder="23456"></div>
-        <div style="max-width:160px"><label>协议</label>
-          <select id="protocol"><option value="TCP">TCP</option><option value="UDP">UDP</option></select></div>
-        <div><label>备注 / 标签（可选）</label><input id="label" placeholder="例如 香港-1"></div>
-        <div class="btn-col"><button class="primary" id="addPort">一键生成</button></div>
-      </div>
-      <p class="muted" style="font-size:12px;margin-bottom:0">用户名 / 密码 / 分享链接将自动生成，无需手填。</p>
-    </div>
-
-    <div class="section">
-      <h2>节点列表（${(n.ports || []).length}）</h2>
-      ${(n.ports || []).length ? `<table>
-        <thead><tr><th>端口</th><th>协议</th><th>标签</th><th>账号</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody>${n.ports.map(p => portRow(p, linkMap[p.id])).join('')}</tbody>
-      </table>` : `<div class="empty">暂无端口，填写端口后点击「一键生成」</div>`}
-    </div>
-
-    <div class="section">
-      <h2>导入客户端</h2>
-      <div class="cmdbox"><code id="nodeSub">${esc(location.origin + panelURL('/api/nodes/' + n.id + '/clash.yaml'))}</code>
-        <button id="dlClash">下载 Clash</button></div>
-      <p class="muted" style="font-size:12px">Clash 订阅链接需要登录态；公开订阅请到「设置」查看。</p>
-    </div>`;
-
-  document.getElementById('copyCmd').onclick = () => copy(install.command);
-  document.getElementById('delNode').onclick = async () => {
-    if (!confirm('确定删除节点 ' + n.name + '？')) return;
-    await api('DELETE', '/api/nodes/' + id);
-    location.hash = '#/nodes';
-  };
-  document.getElementById('saveNode').onclick = async () => {
-    await api('PATCH', '/api/nodes/' + id, {
-      address: document.getElementById('address').value.trim(),
-      domain: document.getElementById('domain').value.trim(),
-    });
-    toast('已保存');
-    renderNode(id);
-  };
-  document.getElementById('addPort').onclick = async () => {
-    const port = parseInt(document.getElementById('port').value, 10);
-    try {
-      await api('POST', '/api/nodes/' + id + '/ports', {
-        port,
-        protocol: document.getElementById('protocol').value,
-        label: document.getElementById('label').value.trim(),
-      });
-      toast('已生成并下发');
-      renderNode(id);
-    } catch (err) { toast(err.message); }
-  };
-  document.getElementById('dlClash').onclick = () => {
-    fetch(panelURL('/api/nodes/' + id + '/clash.yaml')).then(r => r.blob()).then(b => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(b);
-      a.download = n.name + '.yaml';
-      a.click();
-    });
-  };
-
-  (n.ports || []).forEach(p => {
-    const row = document;
-    const cp = document.getElementById('copy-' + p.id);
-    if (cp) cp.onclick = () => copy(linkMap[p.id]);
-    const tg = document.getElementById('toggle-' + p.id);
-    if (tg) tg.onclick = async () => {
-      await api('PATCH', '/api/nodes/' + id + '/ports/' + p.id, { enabled: !p.enabled });
-      renderNode(id);
-    };
-    const rg = document.getElementById('regen-' + p.id);
-    if (rg) rg.onclick = async () => {
-      if (!confirm('重新生成账号密码？旧链接将失效。')) return;
-      await api('PATCH', '/api/nodes/' + id + '/ports/' + p.id, { regenerate: true });
-      renderNode(id);
-    };
-    const dl = document.getElementById('del-' + p.id);
-    if (dl) dl.onclick = async () => {
-      if (!confirm('删除端口 ' + p.port + '？')) return;
-      await api('DELETE', '/api/nodes/' + id + '/ports/' + p.id);
-      renderNode(id);
-    };
-  });
-}
-
-function portRow(p, link) {
-  const cls = p.protocol === 'UDP' ? 'udp' : 'tcp';
-  return `<tr>
-    <td class="mono">${p.port}</td>
-    <td><span class="pill ${cls}">${p.protocol}</span></td>
-    <td>${esc(p.label || '-')}</td>
-    <td class="mono">${esc(p.username)}${link ? '' : ' <span class="tag">(已停用)</span>'}</td>
-    <td>${p.enabled ? '<span style="color:var(--green)">启用</span>' : '<span class="muted">停用</span>'}</td>
-    <td style="white-space:nowrap">
-      ${link ? `<button class="small" id="copy-${p.id}">复制链接</button>` : ''}
-      <button class="small" id="toggle-${p.id}">${p.enabled ? '停用' : '启用'}</button>
-      <button class="small" id="regen-${p.id}">重置</button>
-      <button class="small danger" id="del-${p.id}">删除</button>
-    </td>
-  </tr>`;
-}
-
-/* ---------- settings ---------- */
-async function renderSettings() {
-  app.innerHTML = shell('settings', `<div class="empty">加载中…</div>`);
-  bindShell();
-  const s = await api('GET', '/api/settings');
-  document.getElementById('main').innerHTML = `
-    <div class="section">
-      <h2>公开订阅地址</h2>
-      <p class="muted" style="margin-top:-6px">把此地址填入支持 Clash / mihomo 的客户端即可订阅全部 mieru 节点。</p>
-      <div class="cmdbox">
-        <code id="suburl">${esc(s.subscriptionURL)}</code>
-        <button id="copySub">复制</button>
-        <button id="rotate" class="danger">重置令牌</button>
-      </div>
-      <div class="meta" style="margin-top:12px">数据保存在运行目录的 JSON 文件中，备份该文件即可备份全部配置。</div>
-    </div>
-    <div class="section">
-      <h2>使用说明</h2>
-      <ol class="muted" style="line-height:1.9;margin:0;padding-left:18px">
-        <li>添加节点，复制部署命令到目标服务器执行。</li>
-        <li>节点上线后，在详情页填写端口，一键生成 mieru 节点。</li>
-        <li>复制 <span class="mono">mierus://</span> 链接或使用 Clash 订阅导入客户端。</li>
-      </ol>
-    </div>`;
-  document.getElementById('copySub').onclick = () => copy(s.subscriptionURL);
-  document.getElementById('rotate').onclick = async () => {
-    if (!confirm('重置后旧订阅地址将立即失效，确定？')) return;
-    await api('POST', '/api/settings/sub-token/rotate');
-    toast('已重置');
-    renderSettings();
-  };
-}
-
-/* ---------- router ---------- */
-function route() {
-  if (!me.authenticated) return renderLogin();
-  const hash = location.hash || '#/nodes';
-  if (hash.startsWith('#/node/')) {
-    renderNode(hash.slice('#/node/'.length));
-  } else if (hash.startsWith('#/settings')) {
-    renderSettings();
-  } else {
-    renderNodes();
-  }
-}
-
-(async function init() {
-  try { me = await api('GET', '/api/me'); } catch (e) { me = { authenticated: false }; }
-  window.addEventListener('hashchange', route);
-  route();
-})();
-</script>
-</body>
-</html>
+const app=document.getElementById('app'),modalEl=document.getElementById('modal'),toastEl=document.getElementById('toast');
+const initialTheme=localStorage.getItem('merit-theme')||'light';document.documentElement.dataset.theme=initialTheme;
+const base=location.pathname.replace(/\/+$/,'');
+const state={me:{authenticated:false},view:'nodes',nodes:[],node:null,links:[],install:null,settings:null,loading:false};
+const icon={grid:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>',settings:'<svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.7 1.7-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-2.4v-.2a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-1.7-1.7.06-.06A1.7 1.7 0 0 0 8.46 15a1.7 1.7 0 0 0-1.56-1.03h-.2v-2.4h.2A1.7 1.7 0 0 0 8.46 10a1.7 1.7 0 0 0-.34-1.88l-.06-.06 1.7-1.7.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56V5h2.4v.2a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 1.7 1.7-.06.06A1.7 1.7 0 0 0 19.54 10a1.7 1.7 0 0 0 1.56 1.03h.2v2.4h-.2A1.7 1.7 0 0 0 19.4 15Z"/></svg>',logout:'↪'};
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function logo(){return '<span class="logo-mark">M</span>'}function url(path){return base+path}function toast(msg){toastEl.textContent=msg;toastEl.classList.add('show');clearTimeout(toastEl.t);toastEl.t=setTimeout(()=>toastEl.classList.remove('show'),2200)}function toggleTheme(){const next=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=next;localStorage.setItem('merit-theme',next)}
+async function api(method,path,body){const opt={method,headers:{}};if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body)}const r=await fetch(url(path),opt);const ct=r.headers.get('content-type')||'';const data=ct.includes('json')?await r.json():await r.text();if(r.status===401){state.me.authenticated=false;render();throw Error('登录已失效')}if(!r.ok){const e=Error(data?.error||data||`请求失败 (${r.status})`);e.status=r.status;throw e}return data}
+function copy(s){navigator.clipboard?.writeText(s).then(()=>toast('已复制到剪贴板'),()=>toast('复制失败，请手动复制'))}
+function ago(ts){if(!ts||ts.startsWith('0001'))return'从未';const d=Math.max(0,Math.floor((Date.now()-new Date(ts))/1000));return d<60?`${d} 秒前`:d<3600?`${Math.floor(d/60)} 分钟前`:d<86400?`${Math.floor(d/3600)} 小时前`:`${Math.floor(d/86400)} 天前`}
+function status(n){return !n.registered?['未部署','']:n.online?[n.mitaRunning?'运行中':'在线·未启动','on']:['离线','']}
+function renderLogin(){app.innerHTML=`<main class="auth"><form class="auth-card" id="login"><div class="brand">${logo()}<span>merit<i>.</i></span></div><h1>登录控制台</h1><p>管理你的 mieru 节点和端口配置</p><div class="field"><label>管理员账号</label><input name="username" autocomplete="username" required autofocus></div><div class="field"><label>管理员密码</label><input name="password" type="password" autocomplete="current-password" required></div><div class="error" id="loginError"></div><button class="btn primary full" type="submit">登录控制台</button></form></main>`;document.getElementById('login').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);try{await api('POST','/api/login',{username:f.get('username').trim(),password:f.get('password')});state.me.authenticated=true;render()}catch(err){document.getElementById('loginError').textContent=err.message}}}
+function shell(title,content){app.innerHTML=`<div class="layout"><aside class="sidebar"><div class="brand">${logo()}<span>merit<i>.</i></span></div><nav class="nav"><button class="${state.view==='nodes'?'active':''}" data-nav="nodes">${icon.grid}<span>节点总览</span></button><button class="${state.view==='settings'?'active':''}" data-nav="settings">${icon.settings}<span>系统设置</span></button></nav><div class="sidebar-bottom"><button data-logout>${icon.logout} <span>退出登录</span></button></div></aside><section class="main"><header class="topbar"><h1>${title}</h1><div class="top-actions"><span class="status-dot"></span><span class="muted">系统在线</span><button class="btn small" data-theme>☼ / ☾</button><button class="btn small" data-refresh>刷新</button></div></header><main class="content">${content}</main></section></div>`}
+function render(){if(!state.me.authenticated)return renderLogin();if(state.view==='detail')return renderDetail();if(state.view==='settings')return renderSettings();return renderNodes()}
+async function loadNodes(){state.nodes=await api('GET','/api/nodes')}
+async function renderNodes(){shell('节点总览',`<div class="page-head"><div><h2>节点总览</h2><p>集中管理所有主机与 mieru 端口</p></div><button class="btn primary" data-add-node>＋ 添加节点</button></div><div id="nodeBody"><div class="empty">加载中…</div></div>`);try{await loadNodes();document.getElementById('nodeBody').innerHTML=nodesView()}catch(e){document.getElementById('nodeBody').innerHTML=`<div class="empty">${esc(e.message)}</div>`}bindGlobal()}
+function nodesView(){const total=state.nodes.length,online=state.nodes.filter(n=>n.online).length,ports=state.nodes.reduce((a,n)=>a+(n.ports||[]).filter(p=>p.enabled).length,0),running=state.nodes.filter(n=>n.mitaRunning).length;return `<div class="stats"><div class="stat"><div class="label">全部节点</div><strong>${total}</strong><em>已添加主机</em></div><div class="stat"><div class="label">在线节点</div><strong>${online}</strong><em>实时状态</em></div><div class="stat"><div class="label">运行中</div><strong>${running}</strong><em>mita 服务</em></div><div class="stat"><div class="label">启用端口</div><strong>${ports}</strong><em>全部节点合计</em></div></div>${total?`<div class="node-grid">${state.nodes.map(nodeCard).join('')}</div>`:`<div class="empty"><div style="font-size:38px">⌁</div><h3>还没有节点</h3><p>添加一台主机后，就可以在这里集中管理。</p><button class="btn primary" data-add-node>添加第一个节点</button></div>`}`}
+function nodeCard(n){const [st,cl]=status(n),enabled=(n.ports||[]).filter(p=>p.enabled).length;return `<article class="node-card" data-node="${esc(n.id)}"><div class="node-top"><div class="node-icon">${esc((n.name||'N')[0].toUpperCase())}</div><div class="node-title"><strong>${esc(n.name)}</strong><small>${esc(n.address||n.seenIP||'等待 Agent 上线')}</small></div><span class="state ${cl}">${st}</span></div><div class="node-meta"><div>架构：${esc(n.arch||'—')}　系统：${esc(n.os||'—')}</div><div>端口：${enabled} 个启用　·　最后在线：${ago(n.lastSeen)}</div>${n.lastError?`<div style="color:var(--red)">${esc(n.lastError)}</div>`:''}</div></article>`}
+function modal(title,body,onSubmit){modalEl.innerHTML=`<div class="modal-back" data-close><form class="modal" id="modalForm"><h3>${title}</h3>${body}<div class="modal-foot"><button type="button" class="btn" data-close>取消</button><button class="btn primary">确认</button></div></form></div>`;document.getElementById('modalForm').onsubmit=async e=>{e.preventDefault();try{await onSubmit(new FormData(e.target));modalEl.innerHTML=''}catch(err){toast(err.message)}};modalEl.querySelector('[data-close]').onclick=e=>{if(e.target===e.currentTarget)modalEl.innerHTML=''};modalEl.querySelectorAll('[data-close]').forEach(x=>x.onclick=()=>modalEl.innerHTML='')}
+function addNode(){modal('添加节点',`<div class="field"><label>节点名称</label><input name="name" placeholder="例如 hk-1" required autofocus></div><div class="field"><label>备注（可选）</label><input name="remark" placeholder="线路或用途说明"></div>`,async f=>{const n=await api('POST','/api/nodes',{name:f.get('name'),remark:f.get('remark')});state.view='detail';state.node=n;renderDetail()})}
+async function renderDetail(){shell('节点详情','<div class="empty">加载中…</div>');try{const id=state.node?.id||location.hash.slice(7);const [n,install,links]=await Promise.all([api('GET','/api/nodes/'+id),api('GET','/api/nodes/'+id+'/install'),api('GET','/api/nodes/'+id+'/links')]);state.node=n;state.install=install;state.links=links;document.querySelector('.content').innerHTML=detailView(n,install,links);bindGlobal()}catch(e){document.querySelector('.content').innerHTML=`<div class="empty">${esc(e.message)}</div>`;bindGlobal()}}
+function detailView(n,install,links){const [st,cl]=status(n),map=Object.fromEntries(links.map(x=>[x.id,x.link]));const nativeLinks=links.map(x=>`<div class="command"><code>${esc(x.link)}</code><button class="btn" data-copy="${esc(x.link)}">复制</button></div>`).join('');return `<button class="back" data-back>← 返回节点总览</button><div class="page-head"><div><h2>${esc(n.name)} <span class="state ${cl}">${st}</span></h2><p>${esc(n.address||n.seenIP||'等待 Agent 上线')} · 最后在线 ${ago(n.lastSeen)}</p></div><div class="toolbar"><button class="btn" data-edit-node>编辑信息</button><button class="btn danger" data-delete-node>删除节点</button></div></div><div class="panel"><div class="panel-head"><h3>① 部署 Agent</h3><span class="muted">在目标服务器以 root 执行</span></div><div class="command"><code>${esc(install.command)}</code><button class="btn" data-copy="${esc(install.command)}">复制命令</button></div><div class="form-row" style="margin-top:16px"><div class="field"><label>公网 IP / 地址</label><input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP||'自动探测')}"></div><div class="field"><label>域名（可选）</label><input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div><button class="btn primary" data-save-node>保存节点信息</button></div><p class="muted" style="font-size:12px;margin:12px 0 0">系统：${esc(n.os||'—')} · 架构：${esc(n.arch||'—')} · mita：${esc(n.mitaVer||'—')} · Agent：${esc(n.agentVer||'—')}</p></div><div class="panel"><div class="panel-head"><h3>② 端口与账号</h3><button class="btn primary" data-add-port>＋ 生成端口</button></div>${(n.ports||[]).length?`<div class="table-wrap"><table><thead><tr><th>端口</th><th>协议</th><th>标签</th><th>账号</th><th>状态</th><th>操作</th></tr></thead><tbody>${n.ports.map(p=>portRow(p,map[p.id])).join('')}</tbody></table></div>`:'<div class="empty">还没有端口，点击右上角生成第一个端口。</div>'}</div><div class="panel"><div class="panel-head"><h3>③ 原生 Mieru 链接</h3><span class="muted">复制后直接粘贴到支持 Mieru 的客户端</span></div>${nativeLinks||'<div class="empty">节点还没有可用的原生链接。</div>'}</div><div class="panel"><div class="panel-head"><h3>④ Clash / mihomo</h3><span class="muted">适合导入 Clash Verge、mihomo</span></div><div class="command"><code>${esc(location.origin+url('/api/nodes/'+n.id+'/clash.yaml'))}</code><button class="btn" data-copy="${esc(location.origin+url('/api/nodes/'+n.id+'/clash.yaml'))}">复制地址</button><button class="btn primary" data-download-clash>下载 YAML</button></div></div>`}
+function portRow(p,link){return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span></td><td>${esc(p.label||'—')}</td><td><code>${esc(p.username)}</code></td><td><span class="pill ${p.enabled?'':'off'}">${p.enabled?'启用':'停用'}</span></td><td><div class="toolbar">${link?`<button class="btn small" data-copy="${esc(link)}">复制链接</button>`:''}<button class="btn small" data-toggle-port="${p.id}">${p.enabled?'停用':'启用'}</button><button class="btn small" data-regenerate="${p.id}">重置账号</button><button class="btn small danger" data-delete-port="${p.id}">删除</button></div></td></tr>`}
+function addPort(){modal('生成 mieru 端口',`<div class="field"><label>端口（1025-65535）</label><input name="port" type="number" min="1025" max="65535" placeholder="23456" required autofocus></div><div class="field"><label>协议</label><select name="protocol"><option>TCP</option><option>UDP</option></select></div><div class="field"><label>标签（可选）</label><input name="label" placeholder="例如 香港-1"></div>`,async f=>{await api('POST','/api/nodes/'+state.node.id+'/ports',{port:Number(f.get('port')),protocol:f.get('protocol'),label:f.get('label')});toast('端口已生成并下发');renderDetail()})}
+async function renderSettings(){shell('系统设置','<div class="empty">加载中…</div>');try{const s=await api('GET','/api/settings');state.settings=s;document.querySelector('.content').innerHTML=`<div class="page-head"><div><h2>系统设置</h2><p>管理订阅地址与系统信息</p></div></div><div class="panel"><div class="panel-head"><h3>公开订阅地址</h3><span class="pill">Token 保护</span></div><p class="muted">将此地址填入 Clash Verge、mihomo 等客户端，即可订阅全部已启用节点。</p><div class="command"><code>${esc(s.subscriptionURL)}</code><button class="btn" data-copy="${esc(s.subscriptionURL)}">复制地址</button><button class="btn danger" data-rotate>重置令牌</button></div></div><div class="panel"><div class="panel-head"><h3>使用流程</h3></div><ol class="muted"><li>添加节点，复制部署命令到目标服务器。</li><li>节点上线后生成端口，等待 Agent 同步配置。</li><li>复制 mierus 链接，或使用上方订阅地址导入客户端。</li></ol></div><div class="panel"><div class="panel-head"><h3>系统信息</h3></div><div class="muted">Manager 版本：${esc(s.version||'—')}<br>数据文件：服务端本地 JSON 文件</div></div>`;bindGlobal()}catch(e){document.querySelector('.content').innerHTML=`<div class="empty">${esc(e.message)}</div>`;bindGlobal()}}
+function bindGlobal(){document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{state.view=b.dataset.nav;history.replaceState(null,'',base);render()});document.querySelector('[data-logout]')?.addEventListener('click',async()=>{await api('POST','/api/logout');state.me.authenticated=false;render()});document.querySelector('[data-theme]')?.addEventListener('click',toggleTheme);document.querySelector('[data-refresh]')?.addEventListener('click',()=>state.view==='detail'?renderDetail():state.view==='settings'?renderSettings():renderNodes());document.querySelector('[data-add-node]')?.addEventListener('click',addNode);document.querySelector('[data-back]')?.addEventListener('click',()=>{state.view='nodes';state.node=null;render()});document.querySelector('[data-add-port]')?.addEventListener('click',addPort);document.querySelector('[data-edit-node]')?.addEventListener('click',editNode);document.querySelector('[data-delete-node]')?.addEventListener('click',deleteNode);document.querySelector('[data-save-node]')?.addEventListener('click',saveNode);document.querySelector('[data-download-clash]')?.addEventListener('click',downloadClash);document.querySelector('[data-rotate]')?.addEventListener('click',rotateToken);document.querySelectorAll('[data-node]').forEach(x=>x.onclick=()=>{state.node={id:x.dataset.node};state.view='detail';history.replaceState(null,'',base+'#/node/'+x.dataset.node);renderDetail()});document.querySelectorAll('[data-copy]').forEach(x=>x.onclick=()=>copy(x.dataset.copy));document.querySelectorAll('[data-toggle-port]').forEach(x=>x.onclick=()=>togglePort(x.dataset.togglePort));document.querySelectorAll('[data-regenerate]').forEach(x=>x.onclick=()=>regenerate(x.dataset.regenerate));document.querySelectorAll('[data-delete-port]').forEach(x=>x.onclick=()=>deletePort(x.dataset.deletePort))}
+function editNode(){const n=state.node;modal('编辑节点信息',`<div class="field"><label>节点名称</label><input name="name" value="${esc(n.name)}" required></div><div class="field"><label>备注</label><input name="remark" value="${esc(n.remark)}"></div>`,async f=>{await api('PATCH','/api/nodes/'+n.id,{name:f.get('name'),remark:f.get('remark')});toast('已保存');renderDetail()})}
+async function saveNode(){await api('PATCH','/api/nodes/'+state.node.id,{address:document.getElementById('address').value.trim(),domain:document.getElementById('domain').value.trim()});toast('节点信息已保存');renderDetail()}
+async function deleteNode(){if(!confirm('确定删除此节点及其所有端口？'))return;await api('DELETE','/api/nodes/'+state.node.id);state.view='nodes';state.node=null;render()}
+async function togglePort(id){const p=state.node.ports.find(x=>x.id===id);await api('PATCH','/api/nodes/'+state.node.id+'/ports/'+id,{enabled:!p.enabled});renderDetail()}
+async function regenerate(id){if(!confirm('重置后旧分享链接立即失效，确定继续？'))return;await api('PATCH','/api/nodes/'+state.node.id+'/ports/'+id,{regenerate:true});toast('账号已重置');renderDetail()}
+async function deletePort(id){if(!confirm('确定删除这个端口？'))return;await api('DELETE','/api/nodes/'+state.node.id+'/ports/'+id);renderDetail()}
+async function downloadClash(){const r=await fetch(url('/api/nodes/'+state.node.id+'/clash.yaml'));const b=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=(state.node.name||'node')+'.yaml';a.click();URL.revokeObjectURL(a.href)}
+async function rotateToken(){if(!confirm('重置后旧订阅地址将失效，确定？'))return;await api('POST','/api/settings/sub-token/rotate');toast('订阅令牌已重置');renderSettings()}
+async function init(){try{state.me=await api('GET','/api/me')}catch(e){state.me={authenticated:false}}render()}
+window.addEventListener('hashchange',()=>{const h=location.hash;if(h.startsWith('#/node/')){state.view='detail';state.node={id:h.slice(7)};renderDetail()}else{state.view=h.startsWith('#/settings')?'settings':'nodes';render()}});init();
+</script></body></html>

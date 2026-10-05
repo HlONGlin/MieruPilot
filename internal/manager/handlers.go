@@ -2,8 +2,10 @@ package manager
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -155,6 +157,33 @@ func (s *Server) handlePutEgress(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toDTO(n))
 }
 
+func (s *Server) handleTestEgress(w http.ResponseWriter, r *http.Request) {
+	n := s.store.Node(r.PathValue("id"))
+	if n == nil || n.Egress == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "出站不存在"})
+		return
+	}
+	var proxy *model.EgressProxy
+	for i := range n.Egress.Proxies {
+		if n.Egress.Proxies[i].ID == r.PathValue("proxyId") {
+			proxy = &n.Egress.Proxies[i]
+			break
+		}
+	}
+	if proxy == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "出站不存在"})
+		return
+	}
+	started := time.Now()
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(proxy.Host, strconv.Itoa(proxy.Port)), 5*time.Second)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	_ = conn.Close()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "latencyMs": time.Since(started).Milliseconds(), "message": "TCP 连接成功"})
+}
+
 func validateEgress(cfg *model.EgressConfig) error {
 	if cfg.Proxies == nil {
 		cfg.Proxies = []model.EgressProxy{}
@@ -201,6 +230,11 @@ func validateEgress(cfg *model.EgressConfig) error {
 			}
 		default:
 			return fmt.Errorf("规则 %s 的动作无效", rule.Name)
+		}
+		for _, port := range rule.Ports {
+			if port < 1 || port > 65535 {
+				return fmt.Errorf("规则 %s 的端口无效: %d", rule.Name, port)
+			}
 		}
 		rule.Order = i
 	}

@@ -108,6 +108,7 @@ type EgressRule struct {
 	Domains    []string `json:"domainNames,omitempty"`
 	Action     string   `json:"action"`
 	ProxyNames []string `json:"proxyNames,omitempty"`
+	Ports      []int    `json:"ports,omitempty"`
 	Enabled    bool     `json:"enabled"`
 	Order      int      `json:"order"`
 }

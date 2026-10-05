@@ -1,4 +1,4 @@
-/dist/
 /data/
 *.exe
+!dist/*.exe
 *.log

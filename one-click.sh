@@ -109,7 +109,7 @@ install_manager() {
 
     panel_path="$(ensure_panel_path)"
 
-    if [ ! -s "$DATA_DIR/merit.json" ]; then
+    if ! "$INSTALL_DIR/merit-manager" --data "$DATA_DIR/merit.json" --has-admin >/dev/null 2>&1; then
         printf '\n首次安装，请设置 Manager 管理员账号。\n'
         printf '管理员用户名: '
         read -r admin_username
@@ -150,7 +150,7 @@ EOF
     host="$(detect_host)"
     log "安装完成，管理面板地址："
     printf 'http://%s:%s%s\n' "$host" "$port" "$panel_path"
-    log "请复制上面的完整地址，首次打开后设置管理员账号和密码。"
+    log "请复制上面的完整地址，使用刚才设置的管理员账号登录。"
 }
 
 start_manager() {

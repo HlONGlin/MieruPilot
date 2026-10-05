@@ -24,40 +24,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"setup":         s.store.Admin() == nil,
 		"authenticated": s.checkSession(r),
 	})
-}
-
-func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	if s.store.Admin() != nil {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":         "已初始化，请使用管理员账号登录",
-			"setup":         false,
-			"authenticated": s.checkSession(r),
-		})
-		return
-	}
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求无效"})
-		return
-	}
-	req.Username = strings.TrimSpace(req.Username)
-	if req.Username == "" || len(req.Password) < 4 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "用户名不能为空，密码至少 4 位"})
-		return
-	}
-	if err := s.store.SetAdmin(req.Username, req.Password); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	s.store.SubToken()
-	s.setSession(w)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

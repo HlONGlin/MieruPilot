@@ -20,7 +20,7 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 
 脚本会根据服务器架构从本项目 `main` 分支下载 Manager 和 Agent，安装到 `/opt/merit`，并创建 `systemd` 服务。首次选择安装时，脚本会直接要求设置管理员账号和密码；安装完成后脚本会输出带随机安全后缀的完整管理地址，例如 `http://服务器IP:3000/panel/随机字符串`，打开后直接使用刚设置的账号登录。
 
-如果已经安装过 Manager，`/var/lib/merit/merit.json` 中会保留管理员账号，之后打开管理地址会显示登录页面，这是正常行为。忘记账号或密码时，在一键管理菜单选择「5. 重置管理员账号」，也可以执行：
+如果已经安装过 Manager，`/var/lib/merit/merit.json` 中会保留管理员账号，之后打开管理地址会直接显示登录页面。管理员账号不在网页中设置；忘记账号或密码时，在一键管理菜单选择「5. 重置管理员账号」，也可以执行：
 
 ```sh
 /opt/merit/merit-manager --data /var/lib/merit/merit.json --reset-admin
@@ -124,9 +124,9 @@ dist/merit-agent-linux-arm64
 | `--public-url` | 空 | 对外访问地址，如 `http://1.2.3.4:3000`；留空自动用请求 Host |
 | `--panel-path` | 自动生成 | 管理面板随机访问路径，例如 `/panel/abc123`；重启后保持不变 |
 
-打开安装完成后脚本输出的完整管理地址（包含 `/panel/随机字符串`）：
+打开安装完成后脚本输出的完整管理地址（包含 `/panel/随机字符串`），使用安装时设置的管理员账号登录：
 
-1. 首次访问设置管理员账号和密码。
+1. 使用安装时设置的管理员账号和密码登录。
 2. 「添加节点」→ 填写名称（如 `hk-1`）。
 3. 复制页面上的部署命令，到目标服务器以 root 执行。
 4. 节点上线后，在详情页填写端口，点击「一键生成」。

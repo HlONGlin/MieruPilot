@@ -114,7 +114,7 @@
 <script>
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
-let me = { setup: false, authenticated: false };
+let me = { authenticated: false };
 const panelBase = location.pathname.replace(/\/+$/, '');
 
 function panelURL(path) {
@@ -167,45 +167,10 @@ function bytesAgo(ts) {
 }
 
 /* ---------- auth screens ---------- */
-function renderSetup() {
-  app.innerHTML = `<div class="center"><div class="card">
-    <h1>merit</h1>
-    <p class="sub">首次使用，请创建管理员账号</p>
-    <label>用户名</label><input id="u" autocomplete="username">
-    <label>密码</label><input id="p" type="password" autocomplete="new-password">
-    <label>确认密码</label><input id="p2" type="password" autocomplete="new-password">
-    <div class="err" id="e"></div>
-    <button class="primary full" id="go">创建并进入</button>
-  </div></div>`;
-  document.getElementById('go').onclick = async () => {
-    try {
-      const password = document.getElementById('p').value;
-      if (password !== document.getElementById('p2').value) throw new Error('两次输入的密码不一致');
-      await api('POST', '/api/setup', {
-        username: document.getElementById('u').value.trim(), password,
-      });
-      me = { setup: true, authenticated: true };
-      location.hash = '#/nodes';
-      route();
-    } catch (err) {
-      if (err.status === 409) {
-        me = await api('GET', '/api/me');
-        if (!me.setup) {
-          me.authenticated = false;
-          location.hash = '';
-          route();
-          return;
-        }
-      }
-      document.getElementById('e').textContent = err.message;
-    }
-  };
-}
-
 function renderLogin() {
   app.innerHTML = `<div class="center"><div class="card">
     <h1>merit</h1>
-    <p class="sub">登录以管理 mieru 节点<br><span class="muted">如果这是首次安装但仍显示此页面，说明数据目录中已有管理员账号，可使用一键菜单中的「重置管理员账号」。</span></p>
+    <p class="sub">登录以管理 mieru 节点<br><span class="muted">管理员账号只能通过服务器一键管理工具设置或重置。</span></p>
     <label>用户名</label><input id="u" autocomplete="username">
     <label>密码</label><input id="p" type="password" autocomplete="current-password">
     <div class="err" id="e"></div>
@@ -487,7 +452,6 @@ async function renderSettings() {
 
 /* ---------- router ---------- */
 function route() {
-  if (!me.setup) return renderSetup();
   if (!me.authenticated) return renderLogin();
   const hash = location.hash || '#/nodes';
   if (hash.startsWith('#/node/')) {
@@ -500,7 +464,7 @@ function route() {
 }
 
 (async function init() {
-  try { me = await api('GET', '/api/me'); } catch (e) { me = { setup: true, authenticated: false }; }
+  try { me = await api('GET', '/api/me'); } catch (e) { me = { authenticated: false }; }
   window.addEventListener('hashchange', route);
   route();
 })();

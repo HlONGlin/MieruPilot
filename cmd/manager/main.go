@@ -20,6 +20,7 @@ func main() {
 	panelPath := flag.String("panel-path", "", "管理面板随机访问路径，留空自动生成")
 	resetAdmin := flag.Bool("reset-admin", false, "交互式重置管理员账号，保留节点数据")
 	initAdmin := flag.Bool("init-admin", false, "从标准输入读取用户名和密码并初始化管理员账号")
+	hasAdmin := flag.Bool("has-admin", false, "检查是否已经存在管理员账号")
 	flag.Parse()
 
 	if *resetAdmin {
@@ -31,6 +32,16 @@ func main() {
 	if *initAdmin {
 		if err := initializeAdministrator(*data); err != nil {
 			log.Fatal(err)
+		}
+		return
+	}
+	if *hasAdmin {
+		st, err := store.Open(*data)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if st.Admin() == nil {
+			os.Exit(1)
 		}
 		return
 	}

@@ -109,6 +109,25 @@ install_manager() {
 
     panel_path="$(ensure_panel_path)"
 
+    if [ ! -s "$DATA_DIR/merit.json" ]; then
+        printf '\n首次安装，请设置 Manager 管理员账号。\n'
+        printf '管理员用户名: '
+        read -r admin_username
+        printf '管理员密码: '
+        read -r -s admin_password
+        printf '\n确认管理员密码: '
+        read -r -s admin_password_confirm
+        printf '\n'
+        [ -n "$admin_username" ] || die "管理员用户名不能为空。"
+        [ "${#admin_password}" -ge 4 ] || die "管理员密码至少 4 位。"
+        [ "$admin_password" = "$admin_password_confirm" ] || die "两次输入的管理员密码不一致。"
+        if ! printf '%s\n%s\n' "$admin_username" "$admin_password" | \
+            "$INSTALL_DIR/merit-manager" --data "$DATA_DIR/merit.json" --init-admin; then
+            die "管理员账号初始化失败。"
+        fi
+        unset admin_username admin_password admin_password_confirm
+    fi
+
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=merit Manager

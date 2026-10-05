@@ -353,10 +353,11 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := s.baseURL(r)
-	cmd := "curl -fsSL " + base + "/install.sh | sudo bash -s -- --key " + n.APIKey
+	installURL := base + "/install.sh?key=" + n.APIKey
+	cmd := "curl -fsSL '" + installURL + "' | sudo bash -s -- --key " + n.APIKey
 	writeJSON(w, http.StatusOK, map[string]any{
 		"command":      cmd,
-		"installPage":  base + "/install.sh?key=" + n.APIKey,
+		"installPage":  installURL,
 		"apiKey":       n.APIKey,
 		"downloadHost": base,
 	})

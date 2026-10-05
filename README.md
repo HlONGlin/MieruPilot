@@ -18,7 +18,7 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 
 如果想完全清除后重新开始，在一键管理工具中选择 `4`，并输入 `DELETE` 确认。该操作会删除 Manager、管理员账号、节点数据、随机管理地址和所有配置；清除后重新选择 `1` 安装即可。
 
-脚本会根据服务器架构从本项目 `main` 分支下载 Manager 和 Agent，安装到 `/opt/merit`，并创建 `systemd` 服务。安装完成后脚本会输出带随机安全后缀的完整管理地址，例如 `http://服务器IP:3000/panel/随机字符串`，首次打开该地址即可设置管理员账号和密码。
+脚本会根据服务器架构从本项目 `main` 分支下载 Manager 和 Agent，安装到 `/opt/merit`，并创建 `systemd` 服务。首次选择安装时，脚本会直接要求设置管理员账号和密码；安装完成后脚本会输出带随机安全后缀的完整管理地址，例如 `http://服务器IP:3000/panel/随机字符串`，打开后直接使用刚设置的账号登录。
 
 如果已经安装过 Manager，`/var/lib/merit/merit.json` 中会保留管理员账号，之后打开管理地址会显示登录页面，这是正常行为。忘记账号或密码时，在一键管理菜单选择「5. 重置管理员账号」，也可以执行：
 

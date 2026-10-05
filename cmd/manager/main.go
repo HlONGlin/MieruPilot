@@ -19,10 +19,17 @@ func main() {
 	publicURL := flag.String("public-url", "", "对外访问地址，例如 http://1.2.3.4:3000，留空则自动使用请求 Host")
 	panelPath := flag.String("panel-path", "", "管理面板随机访问路径，留空自动生成")
 	resetAdmin := flag.Bool("reset-admin", false, "交互式重置管理员账号，保留节点数据")
+	initAdmin := flag.Bool("init-admin", false, "从标准输入读取用户名和密码并初始化管理员账号")
 	flag.Parse()
 
 	if *resetAdmin {
 		if err := resetAdministrator(*data); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *initAdmin {
+		if err := initializeAdministrator(*data); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -68,5 +75,34 @@ func resetAdministrator(path string) error {
 		return fmt.Errorf("保存管理员账号失败: %w", err)
 	}
 	fmt.Println("管理员账号已更新，节点数据和随机面板地址保持不变。")
+	return nil
+}
+
+func initializeAdministrator(path string) error {
+	st, err := store.Open(path)
+	if err != nil {
+		return fmt.Errorf("打开数据文件失败: %w", err)
+	}
+	if st.Admin() != nil {
+		return fmt.Errorf("管理员账号已经存在，未做修改")
+	}
+	in := bufio.NewReader(os.Stdin)
+	username, err := in.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("读取用户名失败: %w", err)
+	}
+	password, err := in.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("读取密码失败: %w", err)
+	}
+	username = strings.TrimSpace(username)
+	password = strings.TrimSpace(password)
+	if username == "" || len(password) < 4 {
+		return fmt.Errorf("用户名不能为空，密码至少 4 位")
+	}
+	if err := st.SetAdmin(username, password); err != nil {
+		return fmt.Errorf("保存管理员账号失败: %w", err)
+	}
+	fmt.Println("管理员账号初始化成功。")
 	return nil
 }

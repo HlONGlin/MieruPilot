@@ -1,6 +1,6 @@
 # merit · 一键生成 mieru 节点
 
-这是一个 **Manager + Agent** 架构的 mieru 节点管理工具，目标是**一台机器集中控制所有主机、一键生成 mieru 节点**。
+参考 [Zelay](https://github.com/enp6/Zelay) 的 **Manager + Agent** 思路，但目标不是转发，而是**一台机器集中控制所有主机、一键生成 mieru 节点**。
 
 你只需要填一个端口号，用户名、密码、分享链接、Clash 订阅全部自动生成；节点服务器上的 `mita` 由 Agent 自动安装、自动配置、自动启停。
 
@@ -92,13 +92,24 @@ dist/merit-agent-linux-arm64
 curl -fsSL http://你的IP:3000/install.sh | sudo bash -s -- --key <API_KEY>
 ```
 
+<<<<<<< Updated upstream
+=======
 ## 一键脚本
 
-也可以直接使用一键脚本完成部署：
+也可以直接使用项目提供的一键脚本完成 Manager 安装和管理：
 
 ```sh
-bash <(curl -fsSL ssh_tool.eooce.com)
+bash <(curl -fsSL https://raw.githubusercontent.com/HlONGlin/MieruPilot/master/one-click.sh)
 ```
+
+脚本提供数字菜单：
+
+1. 安装或更新 Manager
+2. 启动 Manager
+3. 停止 Manager
+4. 卸载 Manager
+
+脚本会根据服务器架构从本项目 `master` 分支下载 Manager 和 Agent，安装到 `/opt/merit`，并创建 `systemd` 服务。安装完成后访问 `http://服务器IP:端口`，默认端口为 `3000`。
 
 如果提示没有 `curl` 或 `wget`，请先安装：
 
@@ -116,6 +127,7 @@ dnf install -y curl wget
 yum install -y curl wget
 ```
 
+>>>>>>> Stashed changes
 ## Agent 说明
 
 安装脚本会写入 systemd 服务 `/etc/systemd/system/merit-agent.service` 并开机自启。Agent 手动运行参数：
@@ -164,6 +176,14 @@ A: 多为 GitHub 访问受限。可在 Agent 部署命令中追加 `--mita-mirro
 
 **Q: 支持哪些系统？**
 A: 节点端需要 systemd + dpkg（Debian/Ubuntu）或 rpm（CentOS/RedHat/Rocky）的 Linux，支持 amd64 与 arm64。
+
+## 与 Zelay 的区别
+
+| | Zelay | merit |
+|--|-------|-------|
+| 目标 | Realm 转发 | 生成/管理 mieru 节点 |
+| 操作 | 配置监听/远程地址 | 只填端口，其余自动生成 |
+| 内核 | Realm | mita（见える/mieru） |
 
 ## License
 

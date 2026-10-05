@@ -17,6 +17,15 @@ func TestSimpleLink(t *testing.T) {
 	}
 }
 
+func TestSimpleLinkIncludesLabel(t *testing.T) {
+	n := &model.Node{Address: "1.2.3.4"}
+	p := &model.Port{Port: 23456, Protocol: model.ProtocolTCP, Username: "user1", Password: "pass1", Label: "香港-1"}
+	got := SimpleLink(n, p)
+	if !strings.Contains(got, "name=%E9%A6%99%E6%B8%AF-1") {
+		t.Fatalf("SimpleLink = %q, want encoded label", got)
+	}
+}
+
 func TestSimpleLinkIPv6(t *testing.T) {
 	n := &model.Node{Address: "2001:db8::1"}
 	p := &model.Port{Port: 1234, Protocol: model.ProtocolUDP, Username: "u", Password: "p"}

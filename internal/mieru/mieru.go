@@ -129,6 +129,9 @@ func SimpleLink(n *model.Node, p *model.Port) string {
 	q.Set("profile", model.DefaultProfile)
 	q.Add("port", strconv.Itoa(p.Port))
 	q.Add("protocol", p.Protocol)
+	if strings.TrimSpace(p.Label) != "" {
+		q.Set("name", strings.TrimSpace(p.Label))
+	}
 	u.RawQuery = q.Encode()
 	return u.String()
 }

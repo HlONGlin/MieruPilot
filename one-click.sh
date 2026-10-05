@@ -148,6 +148,15 @@ stop_manager() {
     log "merit Manager stopped."
 }
 
+reset_admin() {
+    require_root
+    require_systemd
+    systemctl stop merit-manager.service 2>/dev/null || true
+    "$INSTALL_DIR/merit-manager" --data "$DATA_DIR/merit.json" --reset-admin
+    systemctl start merit-manager.service
+    log "管理员账号已重置，请使用新账号登录。"
+}
+
 uninstall_manager() {
     require_root
     require_systemd
@@ -168,10 +177,11 @@ show_menu() {
 2. 启动 Manager
 3. 停止 Manager
 4. 卸载 Manager
+5. 重置管理员账号（保留节点数据）
 0. 退出
 ====================================
 EOF
-    printf '请选择 [0-4]: '
+    printf '请选择 [0-5]: '
 }
 
 require_root
@@ -184,6 +194,7 @@ while true; do
         2) start_manager ;;
         3) stop_manager ;;
         4) uninstall_manager ;;
+        5) reset_admin ;;
         0) exit 0 ;;
         *) log "无效选择。" ;;
     esac

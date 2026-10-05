@@ -14,8 +14,17 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 2. 启动 Manager
 3. 停止 Manager
 4. 卸载 Manager
+5. 重置管理员账号（保留节点数据）
 
 脚本会根据服务器架构从本项目 `main` 分支下载 Manager 和 Agent，安装到 `/opt/merit`，并创建 `systemd` 服务。安装完成后脚本会输出带随机安全后缀的完整管理地址，例如 `http://服务器IP:3000/panel/随机字符串`，首次打开该地址即可设置管理员账号和密码。
+
+如果已经安装过 Manager，`/var/lib/merit/merit.json` 中会保留管理员账号，之后打开管理地址会显示登录页面，这是正常行为。忘记账号或密码时，在一键管理菜单选择「5. 重置管理员账号」，也可以执行：
+
+```sh
+/opt/merit/merit-manager --data /var/lib/merit/merit.json --reset-admin
+```
+
+重置时需要先停止 Manager 服务，完成后再启动服务；节点数据和随机管理地址不会丢失。
 
 如果提示没有 `curl` 或 `wget`，请先安装：
 

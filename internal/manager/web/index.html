@@ -168,14 +168,16 @@ function renderSetup() {
     <p class="sub">首次使用，请创建管理员账号</p>
     <label>用户名</label><input id="u" autocomplete="username">
     <label>密码</label><input id="p" type="password" autocomplete="new-password">
+    <label>确认密码</label><input id="p2" type="password" autocomplete="new-password">
     <div class="err" id="e"></div>
     <button class="primary full" id="go">创建并进入</button>
   </div></div>`;
   document.getElementById('go').onclick = async () => {
     try {
+      const password = document.getElementById('p').value;
+      if (password !== document.getElementById('p2').value) throw new Error('两次输入的密码不一致');
       await api('POST', '/api/setup', {
-        username: document.getElementById('u').value.trim(),
-        password: document.getElementById('p').value,
+        username: document.getElementById('u').value.trim(), password,
       });
       me = { setup: true, authenticated: true };
       location.hash = '#/nodes';
@@ -187,7 +189,7 @@ function renderSetup() {
 function renderLogin() {
   app.innerHTML = `<div class="center"><div class="card">
     <h1>merit</h1>
-    <p class="sub">登录以管理 mieru 节点</p>
+    <p class="sub">登录以管理 mieru 节点<br><span class="muted">如果这是首次安装但仍显示此页面，说明数据目录中已有管理员账号，可使用一键菜单中的「重置管理员账号」。</span></p>
     <label>用户名</label><input id="u" autocomplete="username">
     <label>密码</label><input id="p" type="password" autocomplete="current-password">
     <div class="err" id="e"></div>

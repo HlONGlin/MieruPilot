@@ -442,7 +442,13 @@ case "$(uname -m)" in
 esac
 
 echo "==> 下载 merit-agent ($ARCH)"
-curl -fsSL "$MANAGER/download/agent?os=linux&arch=$ARCH" -o /usr/local/bin/merit-agent
+agent_tmp="$(mktemp /tmp/merit-agent.XXXXXX)"
+if ! curl -fsSL "$MANAGER/download/agent?os=linux&arch=$ARCH" -o "$agent_tmp"; then
+  echo "下载 merit-agent 失败，请检查 Manager 的 agent 文件是否存在：$MANAGER/download/agent?os=linux&arch=$ARCH" >&2
+  rm -f "$agent_tmp"
+  exit 1
+fi
+mv -f "$agent_tmp" /usr/local/bin/merit-agent
 chmod +x /usr/local/bin/merit-agent
 
 echo "==> 写入 systemd 服务"
@@ -486,8 +492,14 @@ func (s *Server) handleAgentBinary(w http.ResponseWriter, r *http.Request) {
 	path := s.cfg.AgentDir + "/" + name
 	b, err := os.ReadFile(path)
 	if err != nil {
-		http.Error(w, "agent binary not found. 请在构建时生成 "+name+" 并放入 "+s.cfg.AgentDir, http.StatusNotFound)
-		return
+		// The one-click installer stores the selected binary as merit-agent.
+		// Keep accepting that name while also supporting the build artifact name.
+		path = s.cfg.AgentDir + "/merit-agent"
+		b, err = os.ReadFile(path)
+		if err != nil {
+			http.Error(w, "agent binary not found. 请将 "+name+" 或 merit-agent 放入 "+s.cfg.AgentDir, http.StatusNotFound)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename="+name)

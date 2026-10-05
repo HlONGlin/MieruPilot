@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,5 +66,28 @@ func TestInstallCommandIncludesKey(t *testing.T) {
 	want := "/install.sh?key=secret-key"
 	if !strings.Contains(got.Command, want) {
 		t.Fatalf("install command %q does not contain %q", got.Command, want)
+	}
+}
+
+func TestAgentBinaryAcceptsInstallerName(t *testing.T) {
+	agentDir := t.TempDir()
+	dataPath := filepath.Join(t.TempDir(), "merit.json")
+	if err := os.WriteFile(filepath.Join(agentDir, "merit-agent"), []byte("agent-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Config{DataPath: dataPath, AgentDir: agentDir, PanelPath: "/panel/test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	res, err := http.Get(ts.URL + "/panel/test/download/agent?os=linux&arch=amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("agent download status = %d", res.StatusCode)
 	}
 }

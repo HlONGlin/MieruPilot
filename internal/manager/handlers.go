@@ -159,6 +159,9 @@ func validateEgress(cfg *model.EgressConfig) error {
 	seen := map[string]bool{}
 	for i := range cfg.Proxies {
 		p := &cfg.Proxies[i]
+		if strings.TrimSpace(p.ID) == "" {
+			p.ID = mieru.RandomID()
+		}
 		p.Name = strings.TrimSpace(p.Name)
 		p.Host = strings.TrimSpace(p.Host)
 		p.Protocol = model.EgressProtocolSocks5
@@ -172,6 +175,9 @@ func validateEgress(cfg *model.EgressConfig) error {
 	}
 	for i := range cfg.Rules {
 		rule := &cfg.Rules[i]
+		if strings.TrimSpace(rule.ID) == "" {
+			rule.ID = mieru.RandomID()
+		}
 		rule.Name = strings.TrimSpace(rule.Name)
 		if rule.Name == "" {
 			rule.Name = fmt.Sprintf("规则 %d", i+1)

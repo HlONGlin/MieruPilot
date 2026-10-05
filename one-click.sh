@@ -160,11 +160,14 @@ reset_admin() {
 uninstall_manager() {
     require_root
     require_systemd
+    printf '确认彻底删除 Manager、节点、账号和全部配置？请输入 DELETE 确认：'
+    read -r confirmation
+    [ "$confirmation" = "DELETE" ] || { log "已取消清除。"; return; }
     systemctl disable --now merit-manager.service 2>/dev/null || true
     rm -f "$SERVICE_FILE"
     systemctl daemon-reload
     rm -rf "$INSTALL_DIR" "$DATA_DIR"
-    log "merit Manager uninstalled."
+    log "merit Manager、节点数据、管理员账号和全部配置已彻底清除。"
 }
 
 show_menu() {
@@ -176,7 +179,7 @@ show_menu() {
 1. 安装或更新 Manager
 2. 启动 Manager
 3. 停止 Manager
-4. 卸载 Manager
+4. 彻底卸载并清除全部数据
 5. 重置管理员账号（保留节点数据）
 0. 退出
 ====================================

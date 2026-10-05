@@ -13,8 +13,10 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 1. 安装或更新 Manager
 2. 启动 Manager
 3. 停止 Manager
-4. 卸载 Manager
+4. 彻底卸载并清除全部数据
 5. 重置管理员账号（保留节点数据）
+
+如果想完全清除后重新开始，在一键管理工具中选择 `4`，并输入 `DELETE` 确认。该操作会删除 Manager、管理员账号、节点数据、随机管理地址和所有配置；清除后重新选择 `1` 安装即可。
 
 脚本会根据服务器架构从本项目 `main` 分支下载 Manager 和 Agent，安装到 `/opt/merit`，并创建 `systemd` 服务。安装完成后脚本会输出带随机安全后缀的完整管理地址，例如 `http://服务器IP:3000/panel/随机字符串`，首次打开该地址即可设置管理员账号和密码。
 

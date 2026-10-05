@@ -75,13 +75,59 @@ func ServerConfigJSON(cfg *model.DesiredConfig) ([]byte, error) {
 		Port     int    `json:"port"`
 		Protocol string `json:"protocol"`
 	}
-	type serverConfig struct {
-		PortBindings []bindings          `json:"portBindings"`
-		Users        []users             `json:"users"`
-		LoggingLevel string              `json:"loggingLevel"`
-		Egress       *model.EgressConfig `json:"egress,omitempty"`
+	type socks5Auth struct {
+		User     string `json:"user"`
+		Password string `json:"password"`
 	}
-	sc := serverConfig{LoggingLevel: cfg.LoggingLevel, Egress: cfg.Egress}
+	type egressProxy struct {
+		Name                 string      `json:"name"`
+		Protocol             string      `json:"protocol"`
+		Host                 string      `json:"host"`
+		Port                 int         `json:"port"`
+		Socks5Authentication *socks5Auth `json:"socks5Authentication,omitempty"`
+	}
+	type egressRule struct {
+		IPRanges   []string `json:"ipRanges"`
+		Domains    []string `json:"domainNames"`
+		Action     string   `json:"action"`
+		ProxyNames []string `json:"proxyNames,omitempty"`
+	}
+	type egress struct {
+		Proxies []egressProxy `json:"proxies"`
+		Rules   []egressRule  `json:"rules"`
+	}
+	type serverConfig struct {
+		PortBindings []bindings `json:"portBindings"`
+		Users        []users    `json:"users"`
+		LoggingLevel string     `json:"loggingLevel"`
+		Egress       *egress    `json:"egress,omitempty"`
+	}
+	sc := serverConfig{LoggingLevel: cfg.LoggingLevel}
+	if cfg.Egress != nil {
+		sc.Egress = &egress{}
+		for _, p := range cfg.Egress.Proxies {
+			if !p.Enabled {
+				continue
+			}
+			proxy := egressProxy{Name: p.Name, Protocol: model.EgressProtocolSocks5, Host: p.Host, Port: p.Port}
+			if p.Username != "" || p.Password != "" {
+				proxy.Socks5Authentication = &socks5Auth{User: p.Username, Password: p.Password}
+			}
+			sc.Egress.Proxies = append(sc.Egress.Proxies, proxy)
+		}
+		for _, r := range cfg.Egress.Rules {
+			if !r.Enabled {
+				continue
+			}
+			domains := append([]string(nil), r.Domains...)
+			ips := append([]string(nil), r.IPRanges...)
+			if len(domains) == 0 && len(ips) == 0 {
+				domains = []string{"*"}
+				ips = []string{"*"}
+			}
+			sc.Egress.Rules = append(sc.Egress.Rules, egressRule{IPRanges: ips, Domains: domains, Action: r.Action, ProxyNames: r.ProxyNames})
+		}
+	}
 	if sc.LoggingLevel == "" {
 		sc.LoggingLevel = "INFO"
 	}

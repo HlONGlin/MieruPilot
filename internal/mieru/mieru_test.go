@@ -90,3 +90,23 @@ func TestClashSkipsNodeWithoutAddress(t *testing.T) {
 		t.Fatalf("expected no entries without address, got %+v", entries)
 	}
 }
+
+func TestServerConfigEgressUsesMitaFormatAndWildcard(t *testing.T) {
+	cfg := &model.DesiredConfig{Egress: &model.EgressConfig{
+		Proxies: []model.EgressProxy{{Name: "landing-jp", Protocol: model.EgressProtocolSocks5, Host: "127.0.0.1", Port: 1080, Username: "u", Password: "p", Enabled: true}},
+		Rules:   []model.EgressRule{{Name: "all", Action: model.EgressProxyAction, ProxyNames: []string{"landing-jp"}, Enabled: true}},
+	}}
+	out, err := ServerConfigJSON(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	for _, want := range []string{"\"protocol\": \"SOCKS5_PROXY_PROTOCOL\"", "\"socks5Authentication\"", "\"action\": \"PROXY\"", "\"proxyNames\"", "landing-jp", "\"domainNames\"", "\"ipRanges\"", "\"*\""} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("server config missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "\"ports\"") || strings.Contains(text, "\"enabled\"") || strings.Contains(text, "\"order\"") {
+		t.Fatalf("manager-only egress fields leaked into mita config:\n%s", text)
+	}
+}

@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>merit · mieru 节点管理</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel2: #1c2230;
+    --border: #2a3242;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #3b82f6;
+    --accent2: #2563eb;
+    --green: #2ea043;
+    --red: #f85149;
+    --yellow: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  .center { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px; width: 100%; max-width: 380px;
+  }
+  .card h1 { margin: 0 0 4px; font-size: 20px; }
+  .card p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  input, select {
+    width: 100%; padding: 9px 11px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; font-size: 14px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  button {
+    cursor: pointer; border: 1px solid var(--border); background: var(--panel2); color: var(--text);
+    padding: 8px 14px; border-radius: 8px; font-size: 13px; transition: .15s;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent2); border-color: var(--accent2); }
+  button.primary:hover { background: var(--accent); }
+  button.danger { color: var(--red); }
+  button.small { padding: 4px 9px; font-size: 12px; }
+  .full { width: 100%; margin-top: 20px; padding: 10px; font-size: 15px; }
+
+  header {
+    display: flex; align-items: center; gap: 18px; padding: 14px 22px;
+    background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
+  }
+  header .logo { font-weight: 700; font-size: 16px; }
+  header .logo span { color: var(--accent); }
+  header nav { display: flex; gap: 6px; }
+  header nav a { padding: 6px 12px; border-radius: 8px; color: var(--muted); }
+  header nav a.active, header nav a:hover { background: var(--panel2); color: var(--text); }
+  header .spacer { flex: 1; }
+  main { max-width: 1080px; margin: 0 auto; padding: 22px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .node {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+    cursor: pointer; transition: .15s;
+  }
+  .node:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .node .top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .node .name { font-weight: 600; font-size: 15px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.run { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .meta { color: var(--muted); font-size: 12px; }
+  .meta div { margin-top: 3px; }
+
+  .section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  .section h2 { margin: 0 0 14px; font-size: 16px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .row > div { flex: 1; min-width: 120px; }
+  .row .btn-col { flex: none; }
+  code, .mono {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 2px 6px; font-size: 12.5px; word-break: break-all;
+  }
+  .cmdbox { display: flex; gap: 8px; align-items: stretch; }
+  .cmdbox code { flex: 1; padding: 10px; border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 20px; font-size: 11px; border: 1px solid var(--border); }
+  .pill.tcp { color: #58a6ff; border-color: #1f6feb55; }
+  .pill.udp { color: #d29922; border-color: #d2992255; }
+  .tag { font-size: 11px; color: var(--muted); }
+  .empty { color: var(--muted); text-align: center; padding: 40px; }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--border); padding: 10px 18px;
+    border-radius: 10px; opacity: 0; transition: .25s; pointer-events: none; z-index: 100;
+  }
+  .toast.show { opacity: 1; bottom: 34px; }
+  .err { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .muted { color: var(--muted); }
+  .flex-between { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .back { color: var(--muted); margin-bottom: 12px; display: inline-block; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+
+<script>
+const app = document.getElementById('app');
+const toastEl = document.getElementById('toast');
+let me = { setup: false, authenticated: false };
+
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastEl._t);
+  toastEl._t = setTimeout(() => toastEl.classList.remove('show'), 1800);
+}
+
+async function api(method, path, body) {
+  const opt = { method, headers: {} };
+  if (body !== undefined) {
+    opt.headers['Content-Type'] = 'application/json';
+    opt.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opt);
+  const ct = res.headers.get('content-type') || '';
+  const data = ct.includes('application/json') ? await res.json() : await res.text();
+  if (!res.ok) throw new Error((data && data.error) || data || ('HTTP ' + res.status));
+  return data;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function copy(text) {
+  navigator.clipboard.writeText(text).then(() => toast('已复制'), () => toast('复制失败'));
+}
+
+function bytesAgo(ts) {
+  if (!ts || ts.startsWith('0001')) return '从未';
+  const d = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (d < 5) return '刚刚';
+  if (d < 60) return d + ' 秒前';
+  if (d < 3600) return Math.floor(d / 60) + ' 分钟前';
+  if (d < 86400) return Math.floor(d / 3600) + ' 小时前';
+  return Math.floor(d / 86400) + ' 天前';
+}
+
+/* ---------- auth screens ---------- */
+function renderSetup() {
+  app.innerHTML = `<div class="center"><div class="card">
+    <h1>merit</h1>
+    <p class="sub">首次使用，请创建管理员账号</p>
+    <label>用户名</label><input id="u" autocomplete="username">
+    <label>密码</label><input id="p" type="password" autocomplete="new-password">
+    <div class="err" id="e"></div>
+    <button class="primary full" id="go">创建并进入</button>
+  </div></div>`;
+  document.getElementById('go').onclick = async () => {
+    try {
+      await api('POST', '/api/setup', {
+        username: document.getElementById('u').value.trim(),
+        password: document.getElementById('p').value,
+      });
+      me = { setup: true, authenticated: true };
+      location.hash = '#/nodes';
+      route();
+    } catch (err) { document.getElementById('e').textContent = err.message; }
+  };
+}
+
+function renderLogin() {
+  app.innerHTML = `<div class="center"><div class="card">
+    <h1>merit</h1>
+    <p class="sub">登录以管理 mieru 节点</p>
+    <label>用户名</label><input id="u" autocomplete="username">
+    <label>密码</label><input id="p" type="password" autocomplete="current-password">
+    <div class="err" id="e"></div>
+    <button class="primary full" id="go">登录</button>
+  </div></div>`;
+  const submit = async () => {
+    try {
+      await api('POST', '/api/login', {
+        username: document.getElementById('u').value.trim(),
+        password: document.getElementById('p').value,
+      });
+      me.authenticated = true;
+      location.hash = '#/nodes';
+      route();
+    } catch (err) { document.getElementById('e').textContent = err.message; }
+  };
+  document.getElementById('go').onclick = submit;
+  document.getElementById('p').onkeydown = e => { if (e.key === 'Enter') submit(); };
+}
+
+/* ---------- shell ---------- */
+function shell(active, body) {
+  return `<header>
+    <div class="logo">merit<span>.</span></div>
+    <nav>
+      <a href="#/nodes" class="${active === 'nodes' ? 'active' : ''}">节点</a>
+      <a href="#/settings" class="${active === 'settings' ? 'active' : ''}">设置</a>
+    </nav>
+    <div class="spacer"></div>
+    <button class="small" id="logout">退出</button>
+  </header><main id="main">${body}</main>`;
+}
+
+function bindShell() {
+  const b = document.getElementById('logout');
+  if (b) b.onclick = async () => {
+    await api('POST', '/api/logout');
+    me.authenticated = false;
+    location.hash = '';
+    route();
+  };
+}
+
+/* ---------- node list ---------- */
+async function renderNodes() {
+  app.innerHTML = shell('nodes', `<div class="empty">加载中…</div>`);
+  bindShell();
+  const nodes = await api('GET', '/api/nodes');
+  const main = document.getElementById('main');
+  if (!nodes.length) {
+    main.innerHTML = `
+      <div class="flex-between" style="margin-bottom:16px">
+        <h2 style="margin:0">节点</h2>
+        <button class="primary" id="add">+ 添加节点</button>
+      </div>
+      <div class="empty">还没有节点，点击「添加节点」开始</div>`;
+    document.getElementById('add').onclick = addNode;
+    return;
+  }
+  main.innerHTML = `
+    <div class="flex-between" style="margin-bottom:16px">
+      <h2 style="margin:0">节点（${nodes.length}）</h2>
+      <button class="primary" id="add">+ 添加节点</button>
+    </div>
+    <div class="grid">${nodes.map(nodeCard).join('')}</div>`;
+  document.getElementById('add').onclick = addNode;
+  nodes.forEach(n => {
+    document.getElementById('node-' + n.id).onclick = () => { location.hash = '#/node/' + n.id; };
+  });
+}
+
+function nodeCard(n) {
+  const dot = n.online ? 'on' : (n.registered ? 'run' : '');
+  const state = !n.registered ? '未部署' : (n.online ? (n.mitaRunning ? '运行中' : '在线·未启动') : '离线');
+  const addr = n.address || n.seenIP || '未获取地址';
+  const enabled = (n.ports || []).filter(p => p.enabled).length;
+  return `<div class="node" id="node-${n.id}">
+    <div class="top"><span class="dot ${dot}"></span><span class="name">${esc(n.name)}</span>
+      <span class="tag" style="margin-left:auto">${state}</span></div>
+    <div class="meta">
+      <div>地址：${esc(addr)}</div>
+      <div>端口：${enabled} 个启用 / ${(n.ports || []).length} 个</div>
+      <div>最后在线：${bytesAgo(n.lastSeen)}</div>
+      ${n.lastError ? `<div style="color:var(--red)">错误：${esc(n.lastError)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+async function addNode() {
+  const name = prompt('节点名称（例如 hk-1）');
+  if (!name) return;
+  try {
+    const n = await api('POST', '/api/nodes', { name });
+    location.hash = '#/node/' + n.id;
+  } catch (err) { toast(err.message); }
+}
+
+/* ---------- node detail ---------- */
+async function renderNode(id) {
+  app.innerHTML = shell('nodes', `<div class="empty">加载中…</div>`);
+  bindShell();
+  let n;
+  try { n = await api('GET', '/api/nodes/' + id); }
+  catch (err) { document.getElementById('main').innerHTML = `<div class="empty">${esc(err.message)}</div>`; return; }
+
+  const install = await api('GET', '/api/nodes/' + id + '/install');
+  const links = await api('GET', '/api/nodes/' + id + '/links');
+  const linkMap = {};
+  links.forEach(l => { linkMap[l.id] = l.link; });
+
+  const dot = n.online ? 'on' : (n.registered ? 'run' : '');
+  const state = !n.registered ? '未部署' : (n.online ? (n.mitaRunning ? '运行中' : '在线·未启动') : '离线');
+
+  document.getElementById('main').innerHTML = `
+    <a class="back" href="#/nodes">← 返回节点列表</a>
+    <div class="flex-between" style="margin-bottom:16px">
+      <h2 style="margin:0;display:flex;align-items:center;gap:10px">
+        <span class="dot ${dot}"></span>${esc(n.name)}
+        <span class="tag">${state}</span>
+      </h2>
+      <button class="danger small" id="delNode">删除节点</button>
+    </div>
+
+    <div class="section">
+      <h2>① 部署 Agent</h2>
+      <p class="muted" style="margin-top:-6px">在目标服务器上以 root 执行下面这条命令，Agent 会自动安装 mita 并连接面板：</p>
+      <div class="cmdbox">
+        <code id="cmd">${esc(install.command)}</code>
+        <button id="copyCmd">复制</button>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <div><label>公网地址 / IP（留空自动探测）</label>
+          <input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || '自动探测')}"></div>
+        <div><label>域名（可选，用于分享链接）</label>
+          <input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div>
+        <div class="btn-col"><button class="primary" id="saveNode">保存</button></div>
+      </div>
+      <div class="meta" style="margin-top:10px">
+        系统：${esc(n.os || '—')} · 架构：${esc(n.arch || '—')} · Mita：${esc(n.mitaVer || '—')} ·
+        Agent：${esc(n.agentVer || '—')} · 最后在线：${bytesAgo(n.lastSeen)}
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>② 生成节点（只需填端口）</h2>
+      <div class="row">
+        <div style="max-width:160px"><label>端口（1025-65535）</label><input id="port" type="number" placeholder="23456"></div>
+        <div style="max-width:160px"><label>协议</label>
+          <select id="protocol"><option value="TCP">TCP</option><option value="UDP">UDP</option></select></div>
+        <div><label>备注 / 标签（可选）</label><input id="label" placeholder="例如 香港-1"></div>
+        <div class="btn-col"><button class="primary" id="addPort">一键生成</button></div>
+      </div>
+      <p class="muted" style="font-size:12px;margin-bottom:0">用户名 / 密码 / 分享链接将自动生成，无需手填。</p>
+    </div>
+
+    <div class="section">
+      <h2>节点列表（${(n.ports || []).length}）</h2>
+      ${(n.ports || []).length ? `<table>
+        <thead><tr><th>端口</th><th>协议</th><th>标签</th><th>账号</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>${n.ports.map(p => portRow(p, linkMap[p.id])).join('')}</tbody>
+      </table>` : `<div class="empty">暂无端口，填写端口后点击「一键生成」</div>`}
+    </div>
+
+    <div class="section">
+      <h2>导入客户端</h2>
+      <div class="cmdbox"><code id="nodeSub">${esc(location.origin + '/api/nodes/' + n.id + '/clash.yaml')}</code>
+        <button id="dlClash">下载 Clash</button></div>
+      <p class="muted" style="font-size:12px">Clash 订阅链接需要登录态；公开订阅请到「设置」查看。</p>
+    </div>`;
+
+  document.getElementById('copyCmd').onclick = () => copy(install.command);
+  document.getElementById('delNode').onclick = async () => {
+    if (!confirm('确定删除节点 ' + n.name + '？')) return;
+    await api('DELETE', '/api/nodes/' + id);
+    location.hash = '#/nodes';
+  };
+  document.getElementById('saveNode').onclick = async () => {
+    await api('PATCH', '/api/nodes/' + id, {
+      address: document.getElementById('address').value.trim(),
+      domain: document.getElementById('domain').value.trim(),
+    });
+    toast('已保存');
+    renderNode(id);
+  };
+  document.getElementById('addPort').onclick = async () => {
+    const port = parseInt(document.getElementById('port').value, 10);
+    try {
+      await api('POST', '/api/nodes/' + id + '/ports', {
+        port,
+        protocol: document.getElementById('protocol').value,
+        label: document.getElementById('label').value.trim(),
+      });
+      toast('已生成并下发');
+      renderNode(id);
+    } catch (err) { toast(err.message); }
+  };
+  document.getElementById('dlClash').onclick = () => {
+    fetch('/api/nodes/' + id + '/clash.yaml').then(r => r.blob()).then(b => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      a.download = n.name + '.yaml';
+      a.click();
+    });
+  };
+
+  (n.ports || []).forEach(p => {
+    const row = document;
+    const cp = document.getElementById('copy-' + p.id);
+    if (cp) cp.onclick = () => copy(linkMap[p.id]);
+    const tg = document.getElementById('toggle-' + p.id);
+    if (tg) tg.onclick = async () => {
+      await api('PATCH', '/api/nodes/' + id + '/ports/' + p.id, { enabled: !p.enabled });
+      renderNode(id);
+    };
+    const rg = document.getElementById('regen-' + p.id);
+    if (rg) rg.onclick = async () => {
+      if (!confirm('重新生成账号密码？旧链接将失效。')) return;
+      await api('PATCH', '/api/nodes/' + id + '/ports/' + p.id, { regenerate: true });
+      renderNode(id);
+    };
+    const dl = document.getElementById('del-' + p.id);
+    if (dl) dl.onclick = async () => {
+      if (!confirm('删除端口 ' + p.port + '？')) return;
+      await api('DELETE', '/api/nodes/' + id + '/ports/' + p.id);
+      renderNode(id);
+    };
+  });
+}
+
+function portRow(p, link) {
+  const cls = p.protocol === 'UDP' ? 'udp' : 'tcp';
+  return `<tr>
+    <td class="mono">${p.port}</td>
+    <td><span class="pill ${cls}">${p.protocol}</span></td>
+    <td>${esc(p.label || '-')}</td>
+    <td class="mono">${esc(p.username)}${link ? '' : ' <span class="tag">(已停用)</span>'}</td>
+    <td>${p.enabled ? '<span style="color:var(--green)">启用</span>' : '<span class="muted">停用</span>'}</td>
+    <td style="white-space:nowrap">
+      ${link ? `<button class="small" id="copy-${p.id}">复制链接</button>` : ''}
+      <button class="small" id="toggle-${p.id}">${p.enabled ? '停用' : '启用'}</button>
+      <button class="small" id="regen-${p.id}">重置</button>
+      <button class="small danger" id="del-${p.id}">删除</button>
+    </td>
+  </tr>`;
+}
+
+/* ---------- settings ---------- */
+async function renderSettings() {
+  app.innerHTML = shell('settings', `<div class="empty">加载中…</div>`);
+  bindShell();
+  const s = await api('GET', '/api/settings');
+  document.getElementById('main').innerHTML = `
+    <div class="section">
+      <h2>公开订阅地址</h2>
+      <p class="muted" style="margin-top:-6px">把此地址填入支持 Clash / mihomo 的客户端即可订阅全部 mieru 节点。</p>
+      <div class="cmdbox">
+        <code id="suburl">${esc(s.subscriptionURL)}</code>
+        <button id="copySub">复制</button>
+        <button id="rotate" class="danger">重置令牌</button>
+      </div>
+      <div class="meta" style="margin-top:12px">数据保存在运行目录的 JSON 文件中，备份该文件即可备份全部配置。</div>
+    </div>
+    <div class="section">
+      <h2>使用说明</h2>
+      <ol class="muted" style="line-height:1.9;margin:0;padding-left:18px">
+        <li>添加节点，复制部署命令到目标服务器执行。</li>
+        <li>节点上线后，在详情页填写端口，一键生成 mieru 节点。</li>
+        <li>复制 <span class="mono">mierus://</span> 链接或使用 Clash 订阅导入客户端。</li>
+      </ol>
+    </div>`;
+  document.getElementById('copySub').onclick = () => copy(s.subscriptionURL);
+  document.getElementById('rotate').onclick = async () => {
+    if (!confirm('重置后旧订阅地址将立即失效，确定？')) return;
+    await api('POST', '/api/settings/sub-token/rotate');
+    toast('已重置');
+    renderSettings();
+  };
+}
+
+/* ---------- router ---------- */
+function route() {
+  if (!me.setup) return renderSetup();
+  if (!me.authenticated) return renderLogin();
+  const hash = location.hash || '#/nodes';
+  if (hash.startsWith('#/node/')) {
+    renderNode(hash.slice('#/node/'.length));
+  } else if (hash.startsWith('#/settings')) {
+    renderSettings();
+  } else {
+    renderNodes();
+  }
+}
+
+(async function init() {
+  try { me = await api('GET', '/api/me'); } catch (e) { me = { setup: true, authenticated: false }; }
+  window.addEventListener('hashchange', route);
+  route();
+})();
+</script>
+</body>
+</html>

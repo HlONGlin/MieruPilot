@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -215,28 +216,146 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, error) {
 			return "", fmt.Errorf("mita 未安装且自动安装失败: %w", err)
 		}
 	}
-	if !cfg.Enable {
-		_, _ = a.run("mita", "stop")
-		return "已停止 mita", nil
-	}
-
-	raw, err := mieru.ServerConfigJSON(cfg)
-	if err != nil {
+	if err := a.applyPortInstances(cfg); err != nil {
 		return "", err
 	}
-	path := filepath.Join(os.TempDir(), "merit_server_config.json")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		return "", err
-	}
+	return fmt.Sprintf("已应用 %d 个独立 mita 实例", len(cfg.PortBindings)), nil
+}
 
-	if out, err := a.run("mita", "replace", "config", path); err != nil {
-		return "", fmt.Errorf("应用配置失败: %v %s", err, out)
-	}
+// applyPortInstances runs one mita process per enabled port. This is required
+// for per-port egress because mita's native egress rules do not match inbound
+// ports. Each instance gets its own JSON config, systemd unit and UDS socket.
+func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) error {
+	const unitPrefix = "merit-mita-"
+	const configDir = "/etc/merit-mita"
+	// Disable the package's legacy single-instance service so it cannot race
+	// with the per-port services after a reboot.
+	_, _ = a.run("systemctl", "disable", "--now", "mita.service")
 	_, _ = a.run("mita", "stop")
-	if out, err := a.run("mita", "start"); err != nil {
-		return "", fmt.Errorf("启动 mita 失败: %v %s", err, out)
+	_ = os.MkdirAll(configDir, 0o755)
+
+	desired := map[int]bool{}
+	for i, binding := range cfg.PortBindings {
+		if i >= len(cfg.Users) {
+			return fmt.Errorf("端口 %d 缺少账号配置", binding.Port)
+		}
+		desired[binding.Port] = true
+		portCfg := *cfg
+		portCfg.Enable = true
+		portCfg.PortBindings = []model.PortBinding{binding}
+		portCfg.Users = []model.UserCred{cfg.Users[i]}
+		portCfg.Egress = egressForPort(cfg.Egress, binding.Port)
+		raw, err := mieru.ServerConfigJSON(&portCfg)
+		if err != nil {
+			return fmt.Errorf("生成端口 %d 配置失败: %w", binding.Port, err)
+		}
+		configPath := filepath.Join(configDir, fmt.Sprintf("%d.json", binding.Port))
+		if err := os.WriteFile(configPath, raw, 0o640); err != nil {
+			return err
+		}
+		unit := instanceUnit(binding.Port, configPath)
+		unitPath := filepath.Join("/etc/systemd/system", unit+".service")
+		if err := os.WriteFile(unitPath, []byte(instanceService(unit, configPath)), 0o644); err != nil {
+			return err
+		}
 	}
-	return fmt.Sprintf("已应用 %d 个端口", len(cfg.PortBindings)), nil
+
+	if _, err := a.run("systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("systemd 重载失败: %w", err)
+	}
+	for port := range desired {
+		unit := instanceUnit(port, "")
+		if out, err := a.run("systemctl", "enable", "--now", unit+".service"); err != nil {
+			return fmt.Errorf("启动端口 %d 的 mita 实例失败: %v %s", port, err, out)
+		}
+	}
+	return a.removeStaleInstances(desired)
+}
+
+func egressForPort(cfg *model.EgressConfig, port int) *model.EgressConfig {
+	if cfg == nil {
+		return nil
+	}
+	proxies := make(map[string]model.EgressProxy, len(cfg.Proxies))
+	for _, p := range cfg.Proxies {
+		proxies[p.Name] = p
+	}
+	rules := append([]model.EgressRule(nil), cfg.Rules...)
+	sort.SliceStable(rules, func(i, j int) bool { return rules[i].Order < rules[j].Order })
+	for _, r := range rules {
+		if len(r.Ports) > 0 && !containsPort(r.Ports, port) {
+			continue
+		}
+		out := &model.EgressConfig{Proxies: []model.EgressProxy{}, Rules: []model.EgressRule{{Action: r.Action, Domains: r.Domains, IPRanges: r.IPRanges, ProxyNames: r.ProxyNames, Enabled: true}}}
+		for _, name := range r.ProxyNames {
+			if p, ok := proxies[name]; ok && p.Enabled {
+				out.Proxies = append(out.Proxies, p)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func containsPort(ports []int, port int) bool {
+	for _, p := range ports {
+		if p == port {
+			return true
+		}
+	}
+	return false
+}
+
+func instanceUnit(port int, _ string) string { return fmt.Sprintf("%s%d", "merit-mita-", port) }
+
+func instanceService(unit, configPath string) string {
+	if configPath == "" {
+		return ""
+	}
+	socket := "/var/run/mita/" + unit + ".sock"
+	return fmt.Sprintf(`[Unit]
+Description=merit mita instance %s
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=mita
+Group=mita
+Environment="MITA_CONFIG_JSON_FILE=%s"
+Environment="MITA_UDS_PATH=%s"
+ExecStartPre=+/usr/bin/mkdir -p /var/run/mita
+ExecStartPre=+/usr/bin/chown mita:mita /var/run/mita
+ExecStart=/usr/bin/mita run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`, unit, configPath, socket)
+}
+
+func (a *Agent) removeStaleInstances(desired map[int]bool) error {
+	entries, err := os.ReadDir("/etc/systemd/system")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "merit-mita-") || !strings.HasSuffix(name, ".service") {
+			continue
+		}
+		var port int
+		if _, err := fmt.Sscanf(strings.TrimSuffix(strings.TrimPrefix(name, "merit-mita-"), ".service"), "%d", &port); err != nil || desired[port] {
+			continue
+		}
+		unit := strings.TrimSuffix(name, ".service")
+		_, _ = a.run("systemctl", "disable", "--now", unit+".service")
+		_ = os.Remove(filepath.Join("/etc/systemd/system", name))
+		_ = os.Remove(filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json", port)))
+	}
+	_, _ = a.run("systemctl", "daemon-reload")
+	return nil
 }
 
 func (a *Agent) status(installed bool, lastErr error) model.AgentStatus {

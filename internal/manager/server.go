@@ -46,9 +46,10 @@ type Server struct {
 }
 
 type nodeRuntime struct {
-	mu      sync.Mutex
-	pending map[string]*model.Task
-	notify  chan struct{}
+	mu          sync.Mutex
+	pending     map[string]*model.Task
+	notify      chan struct{}
+	initialized bool
 }
 
 // New creates a manager server, opening the data store.

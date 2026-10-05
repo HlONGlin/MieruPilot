@@ -69,7 +69,12 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	if firstRegister {
+	runtime := s.nodeRuntime(n.ID)
+	runtime.mu.Lock()
+	managerRestarted := !runtime.initialized
+	runtime.initialized = true
+	runtime.mu.Unlock()
+	if firstRegister || managerRestarted {
 		s.enqueueSync(n)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

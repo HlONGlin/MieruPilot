@@ -115,6 +115,11 @@
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 let me = { setup: false, authenticated: false };
+const panelBase = location.pathname.replace(/\/+$/, '');
+
+function panelURL(path) {
+  return panelBase + path;
+}
 
 function toast(msg) {
   toastEl.textContent = msg;
@@ -129,7 +134,7 @@ async function api(method, path, body) {
     opt.headers['Content-Type'] = 'application/json';
     opt.body = JSON.stringify(body);
   }
-  const res = await fetch(path, opt);
+  const res = await fetch(panelURL(path), opt);
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('application/json') ? await res.json() : await res.text();
   if (!res.ok) throw new Error((data && data.error) || data || ('HTTP ' + res.status));
@@ -348,7 +353,7 @@ async function renderNode(id) {
 
     <div class="section">
       <h2>导入客户端</h2>
-      <div class="cmdbox"><code id="nodeSub">${esc(location.origin + '/api/nodes/' + n.id + '/clash.yaml')}</code>
+      <div class="cmdbox"><code id="nodeSub">${esc(location.origin + panelURL('/api/nodes/' + n.id + '/clash.yaml'))}</code>
         <button id="dlClash">下载 Clash</button></div>
       <p class="muted" style="font-size:12px">Clash 订阅链接需要登录态；公开订阅请到「设置」查看。</p>
     </div>`;
@@ -380,7 +385,7 @@ async function renderNode(id) {
     } catch (err) { toast(err.message); }
   };
   document.getElementById('dlClash').onclick = () => {
-    fetch('/api/nodes/' + id + '/clash.yaml').then(r => r.blob()).then(b => {
+    fetch(panelURL('/api/nodes/' + id + '/clash.yaml')).then(r => r.blob()).then(b => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(b);
       a.download = n.name + '.yaml';

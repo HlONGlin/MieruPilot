@@ -232,7 +232,14 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) error {
 	// with the per-port services after a reboot.
 	_, _ = a.run("systemctl", "disable", "--now", "mita.service")
 	_, _ = a.run("mita", "stop")
-	_ = os.MkdirAll(configDir, 0o755)
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
+		return err
+	}
+	// mita runs as the dedicated mita user and must be able to read its
+	// per-port JSON files. The agent itself normally runs as root.
+	if out, err := a.run("chown", "-R", "mita:mita", configDir); err != nil {
+		return fmt.Errorf("设置 mita 配置目录权限失败: %v %s", err, out)
+	}
 
 	desired := map[int]bool{}
 	for i, binding := range cfg.PortBindings {
@@ -252,6 +259,9 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) error {
 		configPath := filepath.Join(configDir, fmt.Sprintf("%d.json", binding.Port))
 		if err := os.WriteFile(configPath, raw, 0o640); err != nil {
 			return err
+		}
+		if out, err := a.run("chown", "mita:mita", configPath); err != nil {
+			return fmt.Errorf("设置端口 %d 配置权限失败: %v %s", binding.Port, err, out)
 		}
 		unit := instanceUnit(binding.Port, configPath)
 		unitPath := filepath.Join("/etc/systemd/system", unit+".service")
@@ -326,13 +336,15 @@ Environment="MITA_CONFIG_JSON_FILE=%s"
 Environment="MITA_UDS_PATH=%s"
 ExecStartPre=+/usr/bin/mkdir -p /var/run/mita
 ExecStartPre=+/usr/bin/chown mita:mita /var/run/mita
+ExecStartPre=+/usr/bin/chown mita:mita %s
+ExecStartPre=+/usr/bin/chmod 640 %s
 ExecStart=/usr/bin/mita run
 Restart=on-failure
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, unit, configPath, socket)
+`, unit, configPath, socket, configPath, configPath)
 }
 
 func (a *Agent) removeStaleInstances(desired map[int]bool) error {

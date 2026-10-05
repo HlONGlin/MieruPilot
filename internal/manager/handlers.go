@@ -156,6 +156,12 @@ func (s *Server) handlePutEgress(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateEgress(cfg *model.EgressConfig) error {
+	if cfg.Proxies == nil {
+		cfg.Proxies = []model.EgressProxy{}
+	}
+	if cfg.Rules == nil {
+		cfg.Rules = []model.EgressRule{}
+	}
 	seen := map[string]bool{}
 	for i := range cfg.Proxies {
 		p := &cfg.Proxies[i]

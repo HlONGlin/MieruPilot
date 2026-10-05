@@ -91,3 +91,27 @@ func TestAgentBinaryAcceptsInstallerName(t *testing.T) {
 		t.Fatalf("agent download status = %d", res.StatusCode)
 	}
 }
+
+func TestValidateEgressNormalizesEmptyListsAndAssignsIDs(t *testing.T) {
+	cfg := model.EgressConfig{
+		Proxies: []model.EgressProxy{{Name: "jp", Host: "127.0.0.1", Port: 1080}},
+		Rules:   []model.EgressRule{{Name: "direct", Action: model.EgressDirect}},
+	}
+	if err := validateEgress(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Proxies[0].ID == "" || cfg.Rules[0].ID == "" {
+		t.Fatalf("IDs were not assigned: %+v", cfg)
+	}
+	if cfg.Proxies[0].Protocol != model.EgressProtocolSocks5 {
+		t.Fatalf("unexpected proxy protocol %q", cfg.Proxies[0].Protocol)
+	}
+
+	empty := model.EgressConfig{}
+	if err := validateEgress(&empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.Proxies == nil || empty.Rules == nil {
+		t.Fatalf("empty egress lists were not normalized: %+v", empty)
+	}
+}

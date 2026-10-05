@@ -2,7 +2,7 @@
 
 set -u
 
-REPO_RAW="https://raw.githubusercontent.com/HlONGlin/MieruPilot/master/dist"
+REPO_RAW="https://github.com/HlONGlin/MieruPilot/raw/main/dist"
 INSTALL_DIR="/opt/merit"
 DATA_DIR="/var/lib/merit"
 SERVICE_FILE="/etc/systemd/system/merit-manager.service"

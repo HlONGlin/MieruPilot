@@ -121,18 +121,28 @@ func ClientHost(n *model.Node) string {
 	return host
 }
 
-// SimpleLink builds a mierus:// simple sharing link for a single port.
+// SimpleLink builds a native mierus:// sharing link for a single port.
+// The fragment is the display name used by clients, with the port label taking
+// precedence over the node name.
 func SimpleLink(n *model.Node, p *model.Port) string {
 	host := ClientHost(n)
 	u := &url.URL{Scheme: "mierus", User: url.UserPassword(p.Username, p.Password), Host: host}
 	q := url.Values{}
+	q.Set("handshake-mode", model.DefaultHandshake)
+	q.Set("mtu", strconv.Itoa(model.DefaultMTU))
+	q.Set("multiplexing", model.DefaultMultiplexing)
 	q.Set("profile", model.DefaultProfile)
 	q.Add("port", strconv.Itoa(p.Port))
 	q.Add("protocol", p.Protocol)
-	if strings.TrimSpace(p.Label) != "" {
-		q.Set("name", strings.TrimSpace(p.Label))
-	}
+	q.Set("traffic-pattern", model.DefaultTrafficPattern)
 	u.RawQuery = q.Encode()
+	name := strings.TrimSpace(p.Label)
+	if name == "" {
+		name = strings.TrimSpace(n.Name)
+	}
+	if name != "" {
+		u.Fragment = name
+	}
 	return u.String()
 }
 
@@ -213,7 +223,10 @@ func ClashYAML(entries []ClashEntry) string {
 		b.WriteString("    udp: true\n")
 		b.WriteString(fmt.Sprintf("    username: %s\n", yamlString(e.Username)))
 		b.WriteString(fmt.Sprintf("    password: %s\n", yamlString(e.Password)))
+		b.WriteString(fmt.Sprintf("    handshake-mode: %s\n", model.DefaultHandshake))
+		b.WriteString(fmt.Sprintf("    mtu: %d\n", model.DefaultMTU))
 		b.WriteString(fmt.Sprintf("    multiplexing: %s\n", model.DefaultMultiplexing))
+		b.WriteString(fmt.Sprintf("    traffic-pattern: %s\n", yamlString(model.DefaultTrafficPattern)))
 		names = append(names, e.Name)
 	}
 

@@ -11,9 +11,19 @@ func TestSimpleLink(t *testing.T) {
 	n := &model.Node{Name: "hk-1", Address: "1.2.3.4"}
 	p := &model.Port{Port: 23456, Protocol: model.ProtocolTCP, Username: "user1", Password: "pass1"}
 	got := SimpleLink(n, p)
-	want := "mierus://user1:pass1@1.2.3.4?port=23456&profile=default&protocol=TCP"
-	if got != want {
-		t.Fatalf("SimpleLink = %q, want %q", got, want)
+	for _, want := range []string{
+		"mierus://user1:pass1@1.2.3.4?handshake-mode=HANDSHAKE_NO_WAIT",
+		"mtu=1400",
+		"multiplexing=MULTIPLEXING_OFF",
+		"port=23456",
+		"profile=default",
+		"protocol=TCP",
+		"traffic-pattern=CIXu%2BasFEAAiCAgBEAEYBCAIKgUIABCAATICCAA%3D",
+		"#hk-1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("SimpleLink = %q, want %q", got, want)
+		}
 	}
 }
 
@@ -21,8 +31,8 @@ func TestSimpleLinkIncludesLabel(t *testing.T) {
 	n := &model.Node{Address: "1.2.3.4"}
 	p := &model.Port{Port: 23456, Protocol: model.ProtocolTCP, Username: "user1", Password: "pass1", Label: "香港-1"}
 	got := SimpleLink(n, p)
-	if !strings.Contains(got, "name=%E9%A6%99%E6%B8%AF-1") {
-		t.Fatalf("SimpleLink = %q, want encoded label", got)
+	if !strings.Contains(got, "#%E9%A6%99%E6%B8%AF-1") {
+		t.Fatalf("SimpleLink = %q, want encoded label fragment", got)
 	}
 }
 
@@ -65,7 +75,7 @@ func TestClashYAML(t *testing.T) {
 		{Port: 23456, Protocol: model.ProtocolTCP, Username: "u", Password: "p", Enabled: true},
 	}}
 	out := ClashYAML(BuildClashEntries(n))
-	for _, want := range []string{"type: mieru", "server: \"1.2.3.4\"", "port: 23456", "transport: TCP", "MATCH,mieru"} {
+	for _, want := range []string{"type: mieru", "server: \"1.2.3.4\"", "port: 23456", "transport: TCP", "handshake-mode: HANDSHAKE_NO_WAIT", "mtu: 1400", "multiplexing: MULTIPLEXING_OFF", "traffic-pattern:", "MATCH,mieru"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("clash yaml missing %q:\n%s", want, out)
 		}

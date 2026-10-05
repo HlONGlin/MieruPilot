@@ -12,10 +12,11 @@ const (
 
 // Defaults applied when generating a mieru client profile.
 const (
-	DefaultProfile      = "default"
-	DefaultMTU          = 1400
-	DefaultMultiplexing = "MULTIPLEXING_LOW"
-	DefaultHandshake    = "HANDSHAKE_STANDARD"
+	DefaultProfile        = "default"
+	DefaultMTU            = 1400
+	DefaultMultiplexing   = "MULTIPLEXING_OFF"
+	DefaultHandshake      = "HANDSHAKE_NO_WAIT"
+	DefaultTrafficPattern = "CIXu+asFEAAiCAgBEAEYBCAIKgUIABCAATICCAA="
 )
 
 // Port is a single auto generated mieru node bound to a node host. Each port

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,7 +34,8 @@ type Admin struct {
 
 // Settings holds panel wide configuration.
 type Settings struct {
-	SubToken string `json:"subToken"`
+	SubToken  string `json:"subToken"`
+	PanelPath string `json:"panelPath"`
 }
 
 type persisted struct {
@@ -162,6 +164,32 @@ func (s *Store) SubToken() string {
 		_ = s.saveLocked()
 	}
 	return s.data.Settings.SubToken
+}
+
+// EnsurePanelPath returns the persistent random path used to access the panel.
+// preferred is used on first startup when supplied by the installer.
+func (s *Store) EnsurePanelPath(preferred string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.Settings != nil && s.data.Settings.PanelPath != "" {
+		return s.data.Settings.PanelPath, nil
+	}
+	path := preferred
+	if path == "" {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		path = "/panel/" + hex.EncodeToString(b)
+	}
+	if !strings.HasPrefix(path, "/panel/") || strings.ContainsAny(path, "?#") || len(path) > 128 {
+		return "", errors.New("invalid panel path")
+	}
+	if s.data.Settings == nil {
+		s.data.Settings = &Settings{}
+	}
+	s.data.Settings.PanelPath = path
+	return path, s.saveLocked()
 }
 
 // RotateSubToken replaces the subscription token with a new random value.

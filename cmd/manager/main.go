@@ -12,6 +12,7 @@ func main() {
 	data := flag.String("data", "data/merit.json", "数据文件路径")
 	agentDir := flag.String("agent-dir", "dist", "存放 agent 二进制的目录（merit-agent-linux-amd64 等）")
 	publicURL := flag.String("public-url", "", "对外访问地址，例如 http://1.2.3.4:3000，留空则自动使用请求 Host")
+	panelPath := flag.String("panel-path", "", "管理面板随机访问路径，留空自动生成")
 	flag.Parse()
 
 	srv, err := manager.New(manager.Config{
@@ -19,6 +20,7 @@ func main() {
 		DataPath:  *data,
 		AgentDir:  *agentDir,
 		PublicURL: *publicURL,
+		PanelPath: *panelPath,
 	})
 	if err != nil {
 		log.Fatalf("启动失败: %v", err)

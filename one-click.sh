@@ -6,6 +6,7 @@ REPO_RAW="https://github.com/HlONGlin/MieruPilot/raw/main/dist"
 INSTALL_DIR="/opt/merit"
 DATA_DIR="/var/lib/merit"
 SERVICE_FILE="/etc/systemd/system/merit-manager.service"
+PANEL_PATH_FILE="$DATA_DIR/panel-path"
 
 log() {
     printf '\n%s\n' "$1"
@@ -44,6 +45,27 @@ detect_arch() {
     esac
 }
 
+detect_host() {
+    host=""
+    if command -v curl >/dev/null 2>&1; then
+        host="$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+    fi
+    [ -n "$host" ] || host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    [ -n "$host" ] || host="<服务器IP>"
+    printf '%s' "$host"
+}
+
+ensure_panel_path() {
+    if [ -s "$PANEL_PATH_FILE" ]; then
+        tr -d '\r\n' < "$PANEL_PATH_FILE"
+        return
+    fi
+    panel_path="/panel/$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    printf '%s\n' "$panel_path" > "$PANEL_PATH_FILE"
+    chmod 0600 "$PANEL_PATH_FILE"
+    printf '%s' "$panel_path"
+}
+
 install_manager() {
     require_root
     require_systemd
@@ -64,6 +86,8 @@ install_manager() {
         ''|*[!0-9]*) die "Port must be a number." ;;
     esac
 
+    panel_path="$(ensure_panel_path)"
+
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=merit Manager
@@ -73,7 +97,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/merit-manager --addr :$port --agent-dir $INSTALL_DIR --data $DATA_DIR/merit.json
+ExecStart=$INSTALL_DIR/merit-manager --addr :$port --agent-dir $INSTALL_DIR --data $DATA_DIR/merit.json --panel-path $panel_path
 Restart=on-failure
 RestartSec=5
 
@@ -83,7 +107,10 @@ EOF
 
     systemctl daemon-reload
     systemctl enable --now merit-manager.service
-    log "Installed and started. Open http://<server-ip>:$port"
+    host="$(detect_host)"
+    log "安装完成，管理面板地址："
+    printf 'http://%s:%s%s\n' "$host" "$port" "$panel_path"
+    log "请复制上面的完整地址，首次打开后设置管理员账号和密码。"
 }
 
 start_manager() {

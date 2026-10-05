@@ -15,7 +15,7 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 3. 停止 Manager
 4. 卸载 Manager
 
-脚本会根据服务器架构从本项目 `main` 分支下载 Manager 和 Agent，安装到 `/opt/merit`，并创建 `systemd` 服务。安装完成后访问 `http://服务器IP:端口`，默认端口为 `3000`。
+脚本会根据服务器架构从本项目 `main` 分支下载 Manager 和 Agent，安装到 `/opt/merit`，并创建 `systemd` 服务。安装完成后脚本会输出带随机安全后缀的完整管理地址，例如 `http://服务器IP:3000/panel/随机字符串`，首次打开该地址即可设置管理员账号和密码。
 
 如果提示没有 `curl` 或 `wget`，请先安装：
 
@@ -111,10 +111,11 @@ dist/merit-agent-linux-arm64
 | `--data` | `data/merit.json` | 数据文件，备份它即可备份全部配置 |
 | `--agent-dir` | `dist` | 存放 agent 二进制的目录 |
 | `--public-url` | 空 | 对外访问地址，如 `http://1.2.3.4:3000`；留空自动用请求 Host |
+| `--panel-path` | 自动生成 | 管理面板随机访问路径，例如 `/panel/abc123`；重启后保持不变 |
 
-打开 `http://你的IP:3000`：
+打开安装完成后脚本输出的完整管理地址（包含 `/panel/随机字符串`）：
 
-1. 首次访问创建管理员账号。
+1. 首次访问设置管理员账号和密码。
 2. 「添加节点」→ 填写名称（如 `hk-1`）。
 3. 复制页面上的部署命令，到目标服务器以 root 执行。
 4. 节点上线后，在详情页填写端口，点击「一键生成」。

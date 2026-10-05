@@ -29,14 +29,16 @@ type Config struct {
 	DataPath  string
 	AgentDir  string
 	PublicURL string
+	PanelPath string
 }
 
 // Server is the manager HTTP server.
 type Server struct {
-	cfg     Config
-	store   *store.Store
-	mux     *http.ServeMux
-	version string
+	cfg       Config
+	store     *store.Store
+	mux       *http.ServeMux
+	version   string
+	panelPath string
 
 	mu       sync.Mutex
 	sessions map[string]time.Time
@@ -63,6 +65,11 @@ func New(cfg Config) (*Server, error) {
 		sessions: map[string]time.Time{},
 		rt:       map[string]*nodeRuntime{},
 	}
+	panelPath, err := st.EnsurePanelPath(cfg.PanelPath)
+	if err != nil {
+		return nil, err
+	}
+	s.panelPath = panelPath
 	s.routes()
 	return s, nil
 }
@@ -71,36 +78,37 @@ func New(cfg Config) (*Server, error) {
 func (s *Server) Handler() http.Handler { return s.mux }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /", s.handleIndex)
-	s.mux.HandleFunc("GET /login", s.handleIndex)
+	p := s.panelPath
+	s.mux.HandleFunc("GET "+p, s.handleIndex)
+	s.mux.HandleFunc("GET "+p+"/", s.handleIndex)
 
-	s.mux.HandleFunc("GET /api/me", s.handleMe)
-	s.mux.HandleFunc("POST /api/setup", s.handleSetup)
-	s.mux.HandleFunc("POST /api/login", s.handleLogin)
-	s.mux.HandleFunc("POST /api/logout", s.handleLogout)
+	s.mux.HandleFunc("GET "+p+"/api/me", s.handleMe)
+	s.mux.HandleFunc("POST "+p+"/api/setup", s.handleSetup)
+	s.mux.HandleFunc("POST "+p+"/api/login", s.handleLogin)
+	s.mux.HandleFunc("POST "+p+"/api/logout", s.handleLogout)
 
-	s.mux.Handle("GET /api/nodes", s.auth(s.handleListNodes))
-	s.mux.Handle("POST /api/nodes", s.auth(s.handleCreateNode))
-	s.mux.Handle("GET /api/nodes/{id}", s.auth(s.handleGetNode))
-	s.mux.Handle("PATCH /api/nodes/{id}", s.auth(s.handleUpdateNode))
-	s.mux.Handle("DELETE /api/nodes/{id}", s.auth(s.handleDeleteNode))
-	s.mux.Handle("POST /api/nodes/{id}/ports", s.auth(s.handleAddPort))
-	s.mux.Handle("PATCH /api/nodes/{id}/ports/{pid}", s.auth(s.handleUpdatePort))
-	s.mux.Handle("DELETE /api/nodes/{id}/ports/{pid}", s.auth(s.handleDeletePort))
-	s.mux.Handle("GET /api/nodes/{id}/install", s.auth(s.handleInstall))
-	s.mux.Handle("GET /api/nodes/{id}/links", s.auth(s.handleLinks))
-	s.mux.Handle("GET /api/nodes/{id}/clash.yaml", s.auth(s.handleNodeClash))
+	s.mux.Handle("GET "+p+"/api/nodes", s.auth(s.handleListNodes))
+	s.mux.Handle("POST "+p+"/api/nodes", s.auth(s.handleCreateNode))
+	s.mux.Handle("GET "+p+"/api/nodes/{id}", s.auth(s.handleGetNode))
+	s.mux.Handle("PATCH "+p+"/api/nodes/{id}", s.auth(s.handleUpdateNode))
+	s.mux.Handle("DELETE "+p+"/api/nodes/{id}", s.auth(s.handleDeleteNode))
+	s.mux.Handle("POST "+p+"/api/nodes/{id}/ports", s.auth(s.handleAddPort))
+	s.mux.Handle("PATCH "+p+"/api/nodes/{id}/ports/{pid}", s.auth(s.handleUpdatePort))
+	s.mux.Handle("DELETE "+p+"/api/nodes/{id}/ports/{pid}", s.auth(s.handleDeletePort))
+	s.mux.Handle("GET "+p+"/api/nodes/{id}/install", s.auth(s.handleInstall))
+	s.mux.Handle("GET "+p+"/api/nodes/{id}/links", s.auth(s.handleLinks))
+	s.mux.Handle("GET "+p+"/api/nodes/{id}/clash.yaml", s.auth(s.handleNodeClash))
 
-	s.mux.Handle("GET /api/settings", s.auth(s.handleSettings))
-	s.mux.Handle("POST /api/settings/sub-token/rotate", s.auth(s.handleRotateSubToken))
+	s.mux.Handle("GET "+p+"/api/settings", s.auth(s.handleSettings))
+	s.mux.Handle("POST "+p+"/api/settings/sub-token/rotate", s.auth(s.handleRotateSubToken))
 
-	s.mux.HandleFunc("GET /sub", s.handleSubscription)
-	s.mux.HandleFunc("GET /install.sh", s.handleInstallScript)
-	s.mux.HandleFunc("GET /download/agent", s.handleAgentBinary)
+	s.mux.HandleFunc("GET "+p+"/sub", s.handleSubscription)
+	s.mux.HandleFunc("GET "+p+"/install.sh", s.handleInstallScript)
+	s.mux.HandleFunc("GET "+p+"/download/agent", s.handleAgentBinary)
 
-	s.mux.HandleFunc("POST /api/agent/report", s.handleAgentReport)
-	s.mux.HandleFunc("GET /api/agent/poll", s.handleAgentPoll)
-	s.mux.HandleFunc("POST /api/agent/result", s.handleAgentResult)
+	s.mux.HandleFunc("POST "+p+"/api/agent/report", s.handleAgentReport)
+	s.mux.HandleFunc("GET "+p+"/api/agent/poll", s.handleAgentPoll)
+	s.mux.HandleFunc("POST "+p+"/api/agent/result", s.handleAgentResult)
 }
 
 // --- sessions ---------------------------------------------------------------
@@ -229,7 +237,7 @@ func readJSON(r *http.Request, v any) error {
 // baseURL returns the externally reachable manager base URL.
 func (s *Server) baseURL(r *http.Request) string {
 	if s.cfg.PublicURL != "" {
-		return strings.TrimRight(s.cfg.PublicURL, "/")
+		return strings.TrimRight(s.cfg.PublicURL, "/") + s.panelPath
 	}
 	scheme := "http"
 	if r.TLS != nil {
@@ -238,7 +246,7 @@ func (s *Server) baseURL(r *http.Request) string {
 	if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
 		scheme = p
 	}
-	return scheme + "://" + r.Host
+	return scheme + "://" + r.Host + s.panelPath
 }
 
 // Serve starts the manager HTTP server.

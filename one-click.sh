@@ -29,9 +29,9 @@ download() {
     url="$1"
     output="$2"
     if command -v curl >/dev/null 2>&1; then
-        curl -fL --retry 3 --connect-timeout 10 "$url" -o "$output" || die "Download failed: $url"
+        curl -fL --retry 3 --connect-timeout 10 "$url" -o "$output"
     elif command -v wget >/dev/null 2>&1; then
-        wget -O "$output" "$url" || die "Download failed: $url"
+        wget -O "$output" "$url"
     else
         die "curl or wget is required. Install it first."
     fi
@@ -73,13 +73,34 @@ install_manager() {
     arch="$(detect_arch)"
     mkdir -p "$INSTALL_DIR" "$DATA_DIR"
 
+    was_running=0
+    if systemctl is-active --quiet merit-manager.service; then
+        was_running=1
+        log "Stopping merit Manager before update..."
+        systemctl stop merit-manager.service || die "Failed to stop merit Manager."
+    fi
+
     log "Downloading merit binaries for $arch..."
-    download "$REPO_RAW/merit-manager-linux-$arch" "$INSTALL_DIR/merit-manager"
-    download "$REPO_RAW/merit-agent-linux-$arch" "$INSTALL_DIR/merit-agent"
-    chmod 0755 "$INSTALL_DIR/merit-manager" "$INSTALL_DIR/merit-agent"
+    manager_tmp="$(mktemp "$INSTALL_DIR/.merit-manager.XXXXXX")"
+    agent_tmp="$(mktemp "$INSTALL_DIR/.merit-agent.XXXXXX")"
+    if ! download "$REPO_RAW/merit-manager-linux-$arch" "$manager_tmp" || \
+       ! download "$REPO_RAW/merit-agent-linux-$arch" "$agent_tmp"; then
+        rm -f "$manager_tmp" "$agent_tmp"
+        if [ "$was_running" -eq 1 ]; then
+            systemctl start merit-manager.service || true
+        fi
+        die "Download failed. Existing installation was kept."
+    fi
+    chmod 0755 "$manager_tmp" "$agent_tmp"
+    mv -f "$manager_tmp" "$INSTALL_DIR/merit-manager"
+    mv -f "$agent_tmp" "$INSTALL_DIR/merit-agent"
 
     port="3000"
-    printf 'Manager port [3000]: '
+    if [ -f "$SERVICE_FILE" ]; then
+        current_port="$(sed -n 's/.*--addr :\([0-9][0-9]*\).*/\1/p' "$SERVICE_FILE" | head -n 1)"
+        [ -n "$current_port" ] && port="$current_port"
+    fi
+    printf 'Manager port [%s]: ' "$port"
     read -r input_port
     [ -n "$input_port" ] && port="$input_port"
     case "$port" in

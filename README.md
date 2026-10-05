@@ -92,6 +92,42 @@ dist/merit-agent-linux-arm64
 curl -fsSL http://你的IP:3000/install.sh | sudo bash -s -- --key <API_KEY>
 ```
 
+<<<<<<< Updated upstream
+=======
+## 一键脚本
+
+也可以直接使用项目提供的一键脚本完成 Manager 安装和管理：
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/HlONGlin/MieruPilot/master/one-click.sh)
+```
+
+脚本提供数字菜单：
+
+1. 安装或更新 Manager
+2. 启动 Manager
+3. 停止 Manager
+4. 卸载 Manager
+
+脚本会根据服务器架构从本项目 `master` 分支下载 Manager 和 Agent，安装到 `/opt/merit`，并创建 `systemd` 服务。安装完成后访问 `http://服务器IP:端口`，默认端口为 `3000`。
+
+如果提示没有 `curl` 或 `wget`，请先安装：
+
+```sh
+# Ubuntu / Debian
+apt-get install -y curl wget
+
+# Alpine
+apk add curl wget
+
+# Fedora
+dnf install -y curl wget
+
+# CentOS / Rocky / AlmaLinux / Oracle Linux / Amazon Linux
+yum install -y curl wget
+```
+
+>>>>>>> Stashed changes
 ## Agent 说明
 
 安装脚本会写入 systemd 服务 `/etc/systemd/system/merit-agent.service` 并开机自启。Agent 手动运行参数：

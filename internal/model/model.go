@@ -35,14 +35,15 @@ type Port struct {
 
 // Node represents one managed host running the merit agent and mita.
 type Node struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	APIKey    string    `json:"apiKey"`
-	Address   string    `json:"address"`
-	Domain    string    `json:"domain"`
-	Remark    string    `json:"remark"`
-	Ports     []*Port   `json:"ports"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	APIKey    string        `json:"apiKey"`
+	Address   string        `json:"address"`
+	Domain    string        `json:"domain"`
+	Remark    string        `json:"remark"`
+	Ports     []*Port       `json:"ports"`
+	Egress    *EgressConfig `json:"egress,omitempty"`
+	CreatedAt time.Time     `json:"createdAt"`
 
 	// Last known information reported by the agent.
 	AgentVer    string    `json:"agentVer,omitempty"`
@@ -81,17 +82,53 @@ type UserCred struct {
 	Password string `json:"password"`
 }
 
+const (
+	EgressProtocolSocks5 = "SOCKS5_PROXY_PROTOCOL"
+	EgressDirect         = "DIRECT"
+	EgressProxyAction    = "PROXY"
+	EgressReject         = "REJECT"
+)
+
+type EgressProxy struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Enabled  bool   `json:"enabled"`
+	Remark   string `json:"remark,omitempty"`
+}
+
+type EgressRule struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	IPRanges   []string `json:"ipRanges,omitempty"`
+	Domains    []string `json:"domainNames,omitempty"`
+	Action     string   `json:"action"`
+	ProxyNames []string `json:"proxyNames,omitempty"`
+	Enabled    bool     `json:"enabled"`
+	Order      int      `json:"order"`
+}
+
+type EgressConfig struct {
+	Proxies []EgressProxy `json:"proxies,omitempty"`
+	Rules   []EgressRule  `json:"rules,omitempty"`
+}
+
 // DesiredConfig is the full desired mita server configuration for a node.
 type DesiredConfig struct {
 	Enable       bool          `json:"enable"`
 	PortBindings []PortBinding `json:"portBindings"`
 	Users        []UserCred    `json:"users"`
 	LoggingLevel string        `json:"loggingLevel"`
+	Egress       *EgressConfig `json:"egress,omitempty"`
 }
 
 // BuildDesired converts the enabled ports of a node into a mita config.
 func (n *Node) BuildDesired() *DesiredConfig {
-	cfg := &DesiredConfig{LoggingLevel: "INFO"}
+	cfg := &DesiredConfig{LoggingLevel: "INFO", Egress: n.Egress}
 	for _, p := range n.Ports {
 		if !p.Enabled {
 			continue

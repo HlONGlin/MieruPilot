@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -69,24 +70,25 @@ func (s *Server) setSession(w http.ResponseWriter) {
 // --- nodes ------------------------------------------------------------------
 
 type nodeDTO struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	APIKey      string        `json:"apiKey"`
-	Address     string        `json:"address"`
-	Domain      string        `json:"domain"`
-	Remark      string        `json:"remark"`
-	Ports       []*model.Port `json:"ports"`
-	CreatedAt   time.Time     `json:"createdAt"`
-	AgentVer    string        `json:"agentVer"`
-	MitaVer     string        `json:"mitaVer"`
-	OS          string        `json:"os"`
-	Arch        string        `json:"arch"`
-	MitaRunning bool          `json:"mitaRunning"`
-	Registered  bool          `json:"registered"`
-	Online      bool          `json:"online"`
-	LastSeen    time.Time     `json:"lastSeen"`
-	LastError   string        `json:"lastError"`
-	SeenIP      string        `json:"seenIP"`
+	ID          string              `json:"id"`
+	Name        string              `json:"name"`
+	APIKey      string              `json:"apiKey"`
+	Address     string              `json:"address"`
+	Domain      string              `json:"domain"`
+	Remark      string              `json:"remark"`
+	Ports       []*model.Port       `json:"ports"`
+	CreatedAt   time.Time           `json:"createdAt"`
+	AgentVer    string              `json:"agentVer"`
+	MitaVer     string              `json:"mitaVer"`
+	OS          string              `json:"os"`
+	Arch        string              `json:"arch"`
+	MitaRunning bool                `json:"mitaRunning"`
+	Registered  bool                `json:"registered"`
+	Online      bool                `json:"online"`
+	LastSeen    time.Time           `json:"lastSeen"`
+	LastError   string              `json:"lastError"`
+	SeenIP      string              `json:"seenIP"`
+	Egress      *model.EgressConfig `json:"egress,omitempty"`
 }
 
 func toDTO(n *model.Node) nodeDTO {
@@ -110,7 +112,87 @@ func toDTO(n *model.Node) nodeDTO {
 		LastSeen:    n.LastSeen,
 		LastError:   n.LastError,
 		SeenIP:      n.SeenIP,
+		Egress:      n.Egress,
 	}
+}
+
+func (s *Server) handleGetEgress(w http.ResponseWriter, r *http.Request) {
+	n := s.store.Node(r.PathValue("id"))
+	if n == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
+		return
+	}
+	if n.Egress == nil {
+		writeJSON(w, http.StatusOK, &model.EgressConfig{})
+		return
+	}
+	writeJSON(w, http.StatusOK, n.Egress)
+}
+
+func (s *Server) handlePutEgress(w http.ResponseWriter, r *http.Request) {
+	var cfg model.EgressConfig
+	if err := readJSON(r, &cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求无效"})
+		return
+	}
+	if err := validateEgress(&cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	n, err := s.store.Update(r.PathValue("id"), func(n *model.Node) error {
+		if len(cfg.Proxies) == 0 && len(cfg.Rules) == 0 {
+			n.Egress = nil
+		} else {
+			n.Egress = &cfg
+		}
+		return nil
+	})
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	s.enqueueSync(n)
+	writeJSON(w, http.StatusOK, toDTO(n))
+}
+
+func validateEgress(cfg *model.EgressConfig) error {
+	seen := map[string]bool{}
+	for i := range cfg.Proxies {
+		p := &cfg.Proxies[i]
+		p.Name = strings.TrimSpace(p.Name)
+		p.Host = strings.TrimSpace(p.Host)
+		p.Protocol = model.EgressProtocolSocks5
+		if p.Name == "" || p.Host == "" || p.Port < 1 || p.Port > 65535 {
+			return fmt.Errorf("出站代理名称、地址或端口无效")
+		}
+		if seen[p.Name] {
+			return fmt.Errorf("出站代理名称重复: %s", p.Name)
+		}
+		seen[p.Name] = true
+	}
+	for i := range cfg.Rules {
+		rule := &cfg.Rules[i]
+		rule.Name = strings.TrimSpace(rule.Name)
+		if rule.Name == "" {
+			rule.Name = fmt.Sprintf("规则 %d", i+1)
+		}
+		switch rule.Action {
+		case model.EgressDirect, model.EgressReject:
+		case model.EgressProxyAction:
+			if len(rule.ProxyNames) == 0 {
+				return fmt.Errorf("规则 %s 使用 PROXY 时必须选择出站代理", rule.Name)
+			}
+			for _, name := range rule.ProxyNames {
+				if !seen[name] {
+					return fmt.Errorf("规则 %s 引用了不存在的出站代理: %s", rule.Name, name)
+				}
+			}
+		default:
+			return fmt.Errorf("规则 %s 的动作无效", rule.Name)
+		}
+		rule.Order = i
+	}
+	return nil
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {

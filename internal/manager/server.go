@@ -94,6 +94,8 @@ func (s *Server) routes() {
 	s.mux.Handle("POST "+p+"/api/nodes/{id}/ports", s.auth(s.handleAddPort))
 	s.mux.Handle("PATCH "+p+"/api/nodes/{id}/ports/{pid}", s.auth(s.handleUpdatePort))
 	s.mux.Handle("DELETE "+p+"/api/nodes/{id}/ports/{pid}", s.auth(s.handleDeletePort))
+	s.mux.Handle("GET "+p+"/api/nodes/{id}/egress", s.auth(s.handleGetEgress))
+	s.mux.Handle("PUT "+p+"/api/nodes/{id}/egress", s.auth(s.handlePutEgress))
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/install", s.auth(s.handleInstall))
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/links", s.auth(s.handleLinks))
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/clash.yaml", s.auth(s.handleNodeClash))

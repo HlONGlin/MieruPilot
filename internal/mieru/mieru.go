@@ -76,11 +76,12 @@ func ServerConfigJSON(cfg *model.DesiredConfig) ([]byte, error) {
 		Protocol string `json:"protocol"`
 	}
 	type serverConfig struct {
-		PortBindings []bindings `json:"portBindings"`
-		Users        []users    `json:"users"`
-		LoggingLevel string     `json:"loggingLevel"`
+		PortBindings []bindings          `json:"portBindings"`
+		Users        []users             `json:"users"`
+		LoggingLevel string              `json:"loggingLevel"`
+		Egress       *model.EgressConfig `json:"egress,omitempty"`
 	}
-	sc := serverConfig{LoggingLevel: cfg.LoggingLevel}
+	sc := serverConfig{LoggingLevel: cfg.LoggingLevel, Egress: cfg.Egress}
 	if sc.LoggingLevel == "" {
 		sc.LoggingLevel = "INFO"
 	}

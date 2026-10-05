@@ -51,6 +51,28 @@ func TestFirstSetupAndLogin(t *testing.T) {
 	}
 }
 
+func TestSetupReturnsConflictWhenAlreadyInitialized(t *testing.T) {
+	dataPath := filepath.Join(t.TempDir(), "merit.json")
+	s, err := New(Config{DataPath: dataPath, AgentDir: t.TempDir(), PanelPath: "/panel/test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SetAdmin("admin", "password"); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	res, err := http.Post(ts.URL+"/panel/test/api/setup", "application/json", strings.NewReader(`{"username":"new","password":"password"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("setup status = %d, want %d", res.StatusCode, http.StatusConflict)
+	}
+}
+
 func TestInstallCommandIncludesKey(t *testing.T) {
 	s, err := New(Config{DataPath: filepath.Join(t.TempDir(), "merit.json"), AgentDir: t.TempDir(), PanelPath: "/panel/test"})
 	if err != nil {

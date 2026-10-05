@@ -31,7 +31,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if s.store.Admin() != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "已初始化"})
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":         "已初始化，请使用管理员账号登录",
+			"setup":         false,
+			"authenticated": s.checkSession(r),
+		})
 		return
 	}
 	var req struct {

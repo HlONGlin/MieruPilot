@@ -46,6 +46,7 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	firstRegister := !node.Registered
+	newAgentInstance := st.AgentID != "" && node.AgentID != st.AgentID
 	ip := st.PublicIP
 	if ip == "" {
 		ip = remoteIP(r)
@@ -54,6 +55,9 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		n.Registered = true
 		n.LastSeen = time.Now()
 		n.AgentVer = st.AgentVersion
+		if st.AgentID != "" {
+			n.AgentID = st.AgentID
+		}
 		n.MitaVer = st.MitaVersion
 		n.OS = st.OS
 		n.Arch = st.Arch
@@ -87,7 +91,7 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 	managerRestarted := !runtime.initialized
 	runtime.initialized = true
 	runtime.mu.Unlock()
-	if firstRegister || managerRestarted {
+	if firstRegister || managerRestarted || newAgentInstance {
 		s.enqueueSync(n)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -180,6 +184,20 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			n.LastError = ""
 		} else {
 			n.LastError = ""
+		}
+		if res.Status != nil {
+			for _, disabled := range res.Status.PortInstances {
+				for _, p := range n.Ports {
+					if p.Port == disabled.Port {
+						p.InstanceRunning = disabled.Running
+						if disabled.Error != "" {
+							p.InstanceError = disabled.Error
+						} else if disabled.Running {
+							p.InstanceError = ""
+						}
+					}
+				}
+			}
 		}
 		return nil
 	})

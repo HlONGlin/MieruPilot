@@ -479,14 +479,6 @@ func (s *Server) handleRetryPortSync(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	_, _ = s.store.Update(n.ID, func(n *model.Node) error {
-		p := n.FindPort(r.PathValue("pid"))
-		if p != nil {
-			p.LastSyncAttempt = time.Now()
-			p.InstanceError = "正在同步"
-		}
-		return nil
-	})
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "已加入同步队列"})
 }
 

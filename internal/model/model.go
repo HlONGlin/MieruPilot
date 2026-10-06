@@ -51,6 +51,7 @@ type Node struct {
 
 	// Last known information reported by the agent.
 	AgentVer    string    `json:"agentVer,omitempty"`
+	AgentID     string    `json:"agentId,omitempty"`
 	MitaVer     string    `json:"mitaVer,omitempty"`
 	OS          string    `json:"os,omitempty"`
 	Arch        string    `json:"arch,omitempty"`
@@ -177,6 +178,7 @@ type AgentStatus struct {
 	Arch          string               `json:"arch"`
 	PublicIP      string               `json:"publicIP"`
 	AgentVersion  string               `json:"agentVersion"`
+	AgentID       string               `json:"agentId,omitempty"`
 	Error         string               `json:"error,omitempty"`
 	PortInstances []PortInstanceStatus `json:"portInstances,omitempty"`
 }

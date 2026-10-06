@@ -5,6 +5,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -38,9 +39,10 @@ type Config struct {
 
 // Agent talks to the manager and manages the local mita instance.
 type Agent struct {
-	cfg    Config
-	client *http.Client
-	poll   *http.Client
+	cfg        Config
+	client     *http.Client
+	poll       *http.Client
+	instanceID string
 }
 
 // New creates an agent.
@@ -55,10 +57,15 @@ func New(cfg Config) (*Agent, error) {
 	if cfg.MitaVersion == "" {
 		cfg.MitaVersion = defaultMitaVersion
 	}
+	idBytes := make([]byte, 16)
+	if _, err := rand.Read(idBytes); err != nil {
+		return nil, fmt.Errorf("生成 Agent 实例 ID 失败: %w", err)
+	}
 	return &Agent{
-		cfg:    cfg,
-		client: &http.Client{Timeout: 30 * time.Second},
-		poll:   &http.Client{Timeout: 60 * time.Second},
+		cfg:        cfg,
+		client:     &http.Client{Timeout: 30 * time.Second},
+		poll:       &http.Client{Timeout: 60 * time.Second},
+		instanceID: hex.EncodeToString(idBytes),
 	}, nil
 }
 
@@ -298,15 +305,22 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstan
 		configPath := filepath.Join(configDir, fmt.Sprintf("%d.json", binding.Port))
 		oldRaw, oldErr := os.ReadFile(configPath)
 		changed := oldErr != nil || configDigest(oldRaw) != configDigest(raw)
-		if err := os.WriteFile(configPath, raw, 0o640); err != nil {
-			result.Error = err.Error()
-			results = append(results, result)
-			return results, err
+		if changed {
+			if err := writeConfigAtomic(configPath, raw); err != nil {
+				result.Error = err.Error()
+				results = append(results, result)
+				return results, err
+			}
 		}
 		if out, err := a.run("chown", "mita:mita", configPath); err != nil {
 			result.Error = fmt.Sprintf("%v %s", err, out)
 			results = append(results, result)
 			return results, fmt.Errorf("设置端口 %d 配置权限失败: %v %s", binding.Port, err, out)
+		}
+		if out, err := a.run("chmod", "640", configPath); err != nil {
+			result.Error = fmt.Sprintf("%v %s", err, out)
+			results = append(results, result)
+			return results, fmt.Errorf("设置端口 %d 配置模式失败: %v %s", binding.Port, err, out)
 		}
 		unit := instanceUnit(binding.Port, configPath)
 		unitPath := filepath.Join("/etc/systemd/system", unit+".service")
@@ -396,6 +410,31 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstan
 func configDigest(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+func writeConfigAtomic(path string, raw []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".merit-mita-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0o640); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func findPortResult(results []model.PortInstanceResult, port int) (model.PortInstanceResult, bool) {
@@ -521,6 +560,22 @@ func (a *Agent) removeStaleInstances(desired map[int]bool) ([]model.PortInstance
 		_ = os.Remove(filepath.Join("/etc/systemd/system", name))
 		_ = os.Remove(filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json", port)))
 	}
+	// Remove orphaned configs too (for example after an interrupted Agent
+	// reinstall where the unit file was already removed).
+	configs, err := os.ReadDir("/etc/merit-mita")
+	if err != nil && !os.IsNotExist(err) {
+		return stopped, err
+	}
+	for _, entry := range configs {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		port, parseErr := strconv.Atoi(strings.TrimSuffix(entry.Name(), ".json"))
+		if parseErr != nil || desired[port] {
+			continue
+		}
+		_ = os.Remove(filepath.Join("/etc/merit-mita", entry.Name()))
+	}
 	if _, err := a.run("systemctl", "daemon-reload"); err != nil {
 		return stopped, fmt.Errorf("清理实例后 systemd 重载失败: %w", err)
 	}
@@ -533,6 +588,7 @@ func (a *Agent) status(installed bool, lastErr error) model.AgentStatus {
 		OS:            runtimeOS(),
 		Arch:          runtime.GOARCH,
 		AgentVersion:  Version,
+		AgentID:       a.instanceID,
 		PublicIP:      publicIP(),
 	}
 	if lastErr != nil {

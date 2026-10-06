@@ -2,10 +2,8 @@ package manager
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -114,7 +112,7 @@ func toDTO(n *model.Node) nodeDTO {
 		LastSeen:    n.LastSeen,
 		LastError:   n.LastError,
 		SeenIP:      n.SeenIP,
-		Egress:      n.Egress,
+		Egress:      egressDTO(n.Egress),
 	}
 }
 
@@ -128,7 +126,21 @@ func (s *Server) handleGetEgress(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, &model.EgressConfig{})
 		return
 	}
-	writeJSON(w, http.StatusOK, n.Egress)
+	writeJSON(w, http.StatusOK, egressDTO(n.Egress))
+}
+
+func egressDTO(cfg *model.EgressConfig) *model.EgressConfig {
+	if cfg == nil {
+		return &model.EgressConfig{Proxies: []model.EgressProxy{}, Rules: []model.EgressRule{}}
+	}
+	copyCfg := &model.EgressConfig{Rules: append([]model.EgressRule(nil), cfg.Rules...), Proxies: make([]model.EgressProxy, len(cfg.Proxies))}
+	copy(copyCfg.Proxies, cfg.Proxies)
+	for i := range copyCfg.Proxies {
+		if copyCfg.Proxies[i].Password != "" {
+			copyCfg.Proxies[i].Password = "••••••••"
+		}
+	}
+	return copyCfg
 }
 
 func (s *Server) handlePutEgress(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +157,19 @@ func (s *Server) handlePutEgress(w http.ResponseWriter, r *http.Request) {
 		if len(cfg.Proxies) == 0 && len(cfg.Rules) == 0 {
 			n.Egress = nil
 		} else {
+			oldPasswords := make(map[string]string)
+			if n.Egress != nil {
+				for _, old := range n.Egress.Proxies {
+					oldPasswords[old.ID] = old.Password
+				}
+			}
+			for i := range cfg.Proxies {
+				if cfg.Proxies[i].Password == "••••••••" || cfg.Proxies[i].Password == "" {
+					if password := oldPasswords[cfg.Proxies[i].ID]; password != "" {
+						cfg.Proxies[i].Password = password
+					}
+				}
+			}
 			n.Egress = &cfg
 		}
 		return nil
@@ -174,14 +199,12 @@ func (s *Server) handleTestEgress(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "出站不存在"})
 		return
 	}
-	started := time.Now()
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(proxy.Host, strconv.Itoa(proxy.Port)), 5*time.Second)
+	ip, latency, err := checkSOCKS5Egress(*proxy)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": err.Error()})
 		return
 	}
-	_ = conn.Close()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "latencyMs": time.Since(started).Milliseconds(), "message": "TCP 连接成功"})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "latencyMs": latency, "exitIP": ip, "message": "SOCKS5 认证及代理出口测试成功"})
 }
 
 func validateEgress(cfg *model.EgressConfig) error {
@@ -354,7 +377,9 @@ func (s *Server) handleAddPort(w http.ResponseWriter, r *http.Request) {
 	var added *model.Port
 	n, err := s.store.Update(r.PathValue("id"), func(n *model.Node) error {
 		for _, p := range n.Ports {
-			if p.Port == req.Port && p.Protocol == proto {
+			// Each per-port mita service owns a single numeric port and config
+			// file. Reusing the number with another transport would collide.
+			if p.Port == req.Port {
 				return errConflict
 			}
 		}
@@ -442,6 +467,27 @@ func (s *Server) handleDeletePort(w http.ResponseWriter, r *http.Request) {
 	}
 	s.enqueueSync(n)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleRetryPortSync(w http.ResponseWriter, r *http.Request) {
+	n := s.store.Node(r.PathValue("id"))
+	if n == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
+		return
+	}
+	if err := s.enqueuePortSync(n, r.PathValue("pid")); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	_, _ = s.store.Update(n.ID, func(n *model.Node) error {
+		p := n.FindPort(r.PathValue("pid"))
+		if p != nil {
+			p.LastSyncAttempt = time.Now()
+			p.InstanceError = "正在同步"
+		}
+		return nil
+	})
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "已加入同步队列"})
 }
 
 // --- links / install --------------------------------------------------------

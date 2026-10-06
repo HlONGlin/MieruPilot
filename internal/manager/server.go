@@ -3,9 +3,11 @@ package manager
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -95,6 +97,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST "+p+"/api/nodes/{id}/ports", s.auth(s.handleAddPort))
 	s.mux.Handle("PATCH "+p+"/api/nodes/{id}/ports/{pid}", s.auth(s.handleUpdatePort))
 	s.mux.Handle("DELETE "+p+"/api/nodes/{id}/ports/{pid}", s.auth(s.handleDeletePort))
+	s.mux.Handle("POST "+p+"/api/nodes/{id}/ports/{pid}/retry", s.auth(s.handleRetryPortSync))
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/egress", s.auth(s.handleGetEgress))
 	s.mux.Handle("PUT "+p+"/api/nodes/{id}/egress", s.auth(s.handlePutEgress))
 	s.mux.Handle("POST "+p+"/api/nodes/{id}/egress/{proxyId}/test", s.auth(s.handleTestEgress))
@@ -174,8 +177,15 @@ func (s *Server) nodeRuntime(id string) *nodeRuntime {
 func (s *Server) enqueueSync(n *model.Node) {
 	r := s.nodeRuntime(n.ID)
 	r.mu.Lock()
-	r.pending[model.TaskSync] = &model.Task{
-		ID:        model.TaskSync,
+	config := n.BuildDesired()
+	encoded, _ := json.Marshal(config)
+	digest := sha256.Sum256(encoded)
+	taskID := fmt.Sprintf("sync-%x", digest[:8])
+	// Full desired-state sync supersedes queued port-specific retries and any
+	// older full sync. Keep only the newest desired state for this node.
+	clear(r.pending)
+	r.pending[taskID] = &model.Task{
+		ID:        taskID,
 		Kind:      model.TaskSync,
 		Config:    n.BuildDesired(),
 		CreatedAt: time.Now(),
@@ -185,6 +195,63 @@ func (s *Server) enqueueSync(n *model.Node) {
 	case r.notify <- struct{}{}:
 	default:
 	}
+}
+
+func (s *Server) enqueuePortSync(n *model.Node, portID string) error {
+	var target *model.Port
+	for _, p := range n.Ports {
+		if p.ID == portID {
+			target = p
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("端口不存在")
+	}
+	if !target.Enabled {
+		return fmt.Errorf("端口已停用，无法同步")
+	}
+	_, _ = s.store.Update(n.ID, func(current *model.Node) error {
+		p := current.FindPort(portID)
+		if p != nil {
+			p.LastSyncAttempt = time.Now()
+			p.InstanceError = "同步中"
+		}
+		return nil
+	})
+	cfg := &model.DesiredConfig{
+		Enable:       true,
+		Partial:      true,
+		PortBindings: []model.PortBinding{{Port: target.Port, Protocol: target.Protocol}},
+		Users:        []model.UserCred{{Name: target.Username, Password: target.Password}},
+		PortIDs:      []string{target.ID},
+		LoggingLevel: "INFO",
+		Egress:       n.Egress,
+	}
+	taskID := fmt.Sprintf("sync-port-%s-%d", target.ID, time.Now().UnixNano())
+	r := s.nodeRuntime(n.ID)
+	r.mu.Lock()
+	// Keep retries for independent ports queued together. A pending full sync
+	// already covers this port, so do not replace it with a partial task.
+	for _, pending := range r.pending {
+		if pending.Config != nil && !pending.Config.Partial {
+			r.mu.Unlock()
+			return nil
+		}
+	}
+	// Replace only an older retry for this same port.
+	for id, pending := range r.pending {
+		if pending.Config != nil && pending.Config.Partial && len(pending.Config.PortIDs) == 1 && pending.Config.PortIDs[0] == target.ID {
+			delete(r.pending, id)
+		}
+	}
+	r.pending[taskID] = &model.Task{ID: taskID, Kind: model.TaskSync, Config: cfg, CreatedAt: time.Now()}
+	r.mu.Unlock()
+	select {
+	case r.notify <- struct{}{}:
+	default:
+	}
+	return nil
 }
 
 func (s *Server) pollTasks(id string, wait time.Duration) []*model.Task {

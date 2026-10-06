@@ -59,6 +59,19 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		n.Arch = st.Arch
 		n.MitaRunning = st.MitaRunning
 		n.LastError = st.Error
+		for _, instance := range st.PortInstances {
+			for _, p := range n.Ports {
+				if p.Port != instance.Port {
+					continue
+				}
+				p.InstanceRunning = instance.Running
+				if instance.Error != "" {
+					p.InstanceError = instance.Error
+				} else if instance.Running && p.InstanceError == "" {
+					p.InstanceError = ""
+				}
+			}
+		}
 		n.SeenIP = ip
 		if n.Address == "" {
 			n.Address = ip
@@ -117,9 +130,48 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid body"})
 		return
 	}
-	s.clearTask(node.ID, res.TaskID)
+	if res.OK || !hasRetryablePortFailure(res) {
+		s.clearTask(node.ID, res.TaskID)
+	} else {
+		// Keep failed sync work available so the agent can retry after fixing
+		// transient issues such as unavailable mita or invalid permissions.
+		runtime := s.nodeRuntime(node.ID)
+		select {
+		case runtime.notify <- struct{}{}:
+		default:
+		}
+	}
 	_, _ = s.store.Update(node.ID, func(n *model.Node) error {
 		n.LastSeen = time.Now()
+		if res.Status != nil {
+			for _, instance := range res.Status.PortInstances {
+				for _, p := range n.Ports {
+					if p.Port == instance.Port {
+						p.InstanceRunning = instance.Running
+						if instance.Error != "" {
+							p.InstanceError = instance.Error
+						} else if instance.Running {
+							p.InstanceError = ""
+						}
+					}
+				}
+			}
+		}
+		for _, result := range res.PortResults {
+			p := n.FindPort(result.PortID)
+			if p == nil {
+				continue
+			}
+			p.LastSyncAttempt = result.CheckedAt
+			if result.OK {
+				p.InstanceRunning = result.Running
+				p.InstanceError = ""
+				p.InstanceSyncedAt = result.CheckedAt
+			} else {
+				p.InstanceRunning = false
+				p.InstanceError = result.Error
+			}
+		}
 		if !res.OK {
 			n.LastError = res.Message
 		} else if res.Status != nil {
@@ -132,4 +184,13 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func hasRetryablePortFailure(res model.TaskResult) bool {
+	for _, p := range res.PortResults {
+		if !p.OK && p.Error != "端口已停用" {
+			return true
+		}
+	}
+	return false
 }

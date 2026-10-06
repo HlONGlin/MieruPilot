@@ -90,6 +90,10 @@ func (s *Store) saveLocked() error {
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		return err
 	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	return os.Rename(tmp, s.path)
 }
 

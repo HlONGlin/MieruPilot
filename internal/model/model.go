@@ -23,14 +23,18 @@ const (
 // owns its own randomly generated username / password so that it can be shared
 // independently as one mieru node.
 type Port struct {
-	ID        string    `json:"id"`
-	Port      int       `json:"port"`
-	Protocol  string    `json:"protocol"`
-	Username  string    `json:"username"`
-	Password  string    `json:"password"`
-	Label     string    `json:"label"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID               string    `json:"id"`
+	Port             int       `json:"port"`
+	Protocol         string    `json:"protocol"`
+	Username         string    `json:"username"`
+	Password         string    `json:"password"`
+	Label            string    `json:"label"`
+	Enabled          bool      `json:"enabled"`
+	CreatedAt        time.Time `json:"createdAt"`
+	InstanceRunning  bool      `json:"instanceRunning"`
+	InstanceSyncedAt time.Time `json:"instanceSyncedAt,omitempty"`
+	LastSyncAttempt  time.Time `json:"lastSyncAttempt,omitempty"`
+	InstanceError    string    `json:"instanceError,omitempty"`
 }
 
 // Node represents one managed host running the merit agent and mita.
@@ -120,11 +124,19 @@ type EgressConfig struct {
 
 // DesiredConfig is the full desired mita server configuration for a node.
 type DesiredConfig struct {
-	Enable       bool          `json:"enable"`
-	PortBindings []PortBinding `json:"portBindings"`
-	Users        []UserCred    `json:"users"`
-	LoggingLevel string        `json:"loggingLevel"`
-	Egress       *EgressConfig `json:"egress,omitempty"`
+	Enable        bool                 `json:"enable"`
+	Partial       bool                 `json:"partial,omitempty"`
+	PortBindings  []PortBinding        `json:"portBindings"`
+	Users         []UserCred           `json:"users"`
+	PortIDs       []string             `json:"portIds,omitempty"`
+	DisabledPorts []PortInstanceTarget `json:"disabledPorts,omitempty"`
+	LoggingLevel  string               `json:"loggingLevel"`
+	Egress        *EgressConfig        `json:"egress,omitempty"`
+}
+
+type PortInstanceTarget struct {
+	ID   string `json:"id"`
+	Port int    `json:"port"`
 }
 
 // BuildDesired converts the enabled ports of a node into a mita config.
@@ -132,10 +144,12 @@ func (n *Node) BuildDesired() *DesiredConfig {
 	cfg := &DesiredConfig{LoggingLevel: "INFO", Egress: n.Egress}
 	for _, p := range n.Ports {
 		if !p.Enabled {
+			cfg.DisabledPorts = append(cfg.DisabledPorts, PortInstanceTarget{ID: p.ID, Port: p.Port})
 			continue
 		}
 		cfg.PortBindings = append(cfg.PortBindings, PortBinding{Port: p.Port, Protocol: p.Protocol})
 		cfg.Users = append(cfg.Users, UserCred{Name: p.Username, Password: p.Password})
+		cfg.PortIDs = append(cfg.PortIDs, p.ID)
 	}
 	cfg.Enable = len(cfg.PortBindings) > 0
 	return cfg
@@ -156,20 +170,37 @@ const (
 
 // AgentStatus is a status snapshot reported by an agent.
 type AgentStatus struct {
-	MitaInstalled bool   `json:"mitaInstalled"`
-	MitaRunning   bool   `json:"mitaRunning"`
-	MitaVersion   string `json:"mitaVersion"`
-	OS            string `json:"os"`
-	Arch          string `json:"arch"`
-	PublicIP      string `json:"publicIP"`
-	AgentVersion  string `json:"agentVersion"`
-	Error         string `json:"error,omitempty"`
+	MitaInstalled bool                 `json:"mitaInstalled"`
+	MitaRunning   bool                 `json:"mitaRunning"`
+	MitaVersion   string               `json:"mitaVersion"`
+	OS            string               `json:"os"`
+	Arch          string               `json:"arch"`
+	PublicIP      string               `json:"publicIP"`
+	AgentVersion  string               `json:"agentVersion"`
+	Error         string               `json:"error,omitempty"`
+	PortInstances []PortInstanceStatus `json:"portInstances,omitempty"`
+}
+
+type PortInstanceStatus struct {
+	Port    int    `json:"port"`
+	Running bool   `json:"running"`
+	Error   string `json:"error,omitempty"`
 }
 
 // TaskResult is the result of executing a Task.
 type TaskResult struct {
-	TaskID  string       `json:"taskId"`
-	OK      bool         `json:"ok"`
-	Message string       `json:"message"`
-	Status  *AgentStatus `json:"status,omitempty"`
+	TaskID      string               `json:"taskId"`
+	OK          bool                 `json:"ok"`
+	Message     string               `json:"message"`
+	Status      *AgentStatus         `json:"status,omitempty"`
+	PortResults []PortInstanceResult `json:"portResults,omitempty"`
+}
+
+type PortInstanceResult struct {
+	PortID    string    `json:"portId"`
+	Port      int       `json:"port"`
+	Running   bool      `json:"running"`
+	OK        bool      `json:"ok"`
+	Error     string    `json:"error,omitempty"`
+	CheckedAt time.Time `json:"checkedAt"`
 }

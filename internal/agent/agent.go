@@ -5,6 +5,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,7 +96,13 @@ func (a *Agent) Run(ctx context.Context) error {
 			continue
 		}
 		for _, t := range tasks {
-			a.apply(t)
+			if err := a.apply(t); err != nil {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(a.cfg.Interval):
+				}
+			}
 		}
 	}
 }
@@ -191,60 +200,88 @@ func (a *Agent) reportResult(res model.TaskResult) {
 
 // --- task execution ---------------------------------------------------------
 
-func (a *Agent) apply(t *model.Task) {
+func (a *Agent) apply(t *model.Task) error {
 	switch t.Kind {
 	case model.TaskSync:
-		msg, err := a.applyConfig(t.Config)
-		res := model.TaskResult{TaskID: t.ID, OK: err == nil, Message: msg}
+		msg, portResults, err := a.applyConfig(t.Config)
+		if err != nil && len(portResults) == 0 && t.Config != nil {
+			for i, binding := range t.Config.PortBindings {
+				result := model.PortInstanceResult{Port: binding.Port, Error: err.Error(), CheckedAt: time.Now()}
+				if i < len(t.Config.PortIDs) {
+					result.PortID = t.Config.PortIDs[i]
+				}
+				portResults = append(portResults, result)
+			}
+		}
+		res := model.TaskResult{TaskID: t.ID, OK: err == nil, Message: msg, PortResults: portResults}
 		if err != nil {
 			res.Message = err.Error()
 		}
 		st := a.status(a.mitaInstalled(), err)
 		res.Status = &st
 		a.reportResult(res)
+		return err
 	default:
 		a.reportResult(model.TaskResult{TaskID: t.ID, OK: false, Message: "unknown task"})
+		return fmt.Errorf("unknown task kind: %s", t.Kind)
 	}
 }
 
-func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, error) {
+func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInstanceResult, error) {
 	if cfg == nil {
-		return "", fmt.Errorf("缺少配置")
+		return "", nil, fmt.Errorf("缺少配置")
 	}
 	if !a.mitaInstalled() {
 		if _, err := a.ensureMita(); err != nil {
-			return "", fmt.Errorf("mita 未安装且自动安装失败: %w", err)
+			return "", nil, fmt.Errorf("mita 未安装且自动安装失败: %w", err)
 		}
 	}
-	if err := a.applyPortInstances(cfg); err != nil {
-		return "", err
+	results, err := a.applyPortInstances(cfg)
+	if err != nil {
+		return "", results, err
 	}
-	return fmt.Sprintf("已应用 %d 个独立 mita 实例", len(cfg.PortBindings)), nil
+	return fmt.Sprintf("已应用 %d 个独立 mita 实例", len(cfg.PortBindings)), results, nil
 }
 
 // applyPortInstances runs one mita process per enabled port. This is required
 // for per-port egress because mita's native egress rules do not match inbound
 // ports. Each instance gets its own JSON config, systemd unit and UDS socket.
-func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) error {
-	const unitPrefix = "merit-mita-"
+func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstanceResult, error) {
 	const configDir = "/etc/merit-mita"
-	// Disable the package's legacy single-instance service so it cannot race
-	// with the per-port services after a reboot.
-	_, _ = a.run("systemctl", "disable", "--now", "mita.service")
-	_, _ = a.run("mita", "stop")
+	seenPorts := make(map[int]bool, len(cfg.PortBindings))
+	for i, binding := range cfg.PortBindings {
+		if seenPorts[binding.Port] {
+			return nil, fmt.Errorf("端口 %d 被重复配置；每个 mita 实例端口号必须唯一", binding.Port)
+		}
+		seenPorts[binding.Port] = true
+		if i >= len(cfg.Users) {
+			return nil, fmt.Errorf("端口 %d 缺少账号配置", binding.Port)
+		}
+	}
+	if !cfg.Partial {
+		// Disable the package's legacy single-instance service so it cannot race
+		// with the per-port services after a reboot. Do not touch it on a
+		// single-port retry, which must not affect other instances.
+		_, _ = a.run("systemctl", "disable", "--now", "mita.service")
+		_, _ = a.run("mita", "stop")
+	}
 	if err := os.MkdirAll(configDir, 0o750); err != nil {
-		return err
+		return nil, err
 	}
 	// mita runs as the dedicated mita user and must be able to read its
 	// per-port JSON files. The agent itself normally runs as root.
 	if out, err := a.run("chown", "-R", "mita:mita", configDir); err != nil {
-		return fmt.Errorf("设置 mita 配置目录权限失败: %v %s", err, out)
+		return nil, fmt.Errorf("设置 mita 配置目录权限失败: %v %s", err, out)
 	}
 
 	desired := map[int]bool{}
+	results := make([]model.PortInstanceResult, 0, len(cfg.PortBindings))
+	changedPorts := map[int]bool{}
+	unitChanged := false
 	for i, binding := range cfg.PortBindings {
-		if i >= len(cfg.Users) {
-			return fmt.Errorf("端口 %d 缺少账号配置", binding.Port)
+		result := model.PortInstanceResult{Port: binding.Port, OK: false, CheckedAt: time.Now()}
+		if i < len(cfg.PortIDs) {
+			result.PortID = cfg.PortIDs[i]
 		}
 		desired[binding.Port] = true
 		portCfg := *cfg
@@ -254,32 +291,129 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) error {
 		portCfg.Egress = egressForPort(cfg.Egress, binding.Port)
 		raw, err := mieru.ServerConfigJSON(&portCfg)
 		if err != nil {
-			return fmt.Errorf("生成端口 %d 配置失败: %w", binding.Port, err)
+			result.Error = err.Error()
+			results = append(results, result)
+			return results, fmt.Errorf("生成端口 %d 配置失败: %w", binding.Port, err)
 		}
 		configPath := filepath.Join(configDir, fmt.Sprintf("%d.json", binding.Port))
+		oldRaw, oldErr := os.ReadFile(configPath)
+		changed := oldErr != nil || configDigest(oldRaw) != configDigest(raw)
 		if err := os.WriteFile(configPath, raw, 0o640); err != nil {
-			return err
+			result.Error = err.Error()
+			results = append(results, result)
+			return results, err
 		}
 		if out, err := a.run("chown", "mita:mita", configPath); err != nil {
-			return fmt.Errorf("设置端口 %d 配置权限失败: %v %s", binding.Port, err, out)
+			result.Error = fmt.Sprintf("%v %s", err, out)
+			results = append(results, result)
+			return results, fmt.Errorf("设置端口 %d 配置权限失败: %v %s", binding.Port, err, out)
 		}
 		unit := instanceUnit(binding.Port, configPath)
 		unitPath := filepath.Join("/etc/systemd/system", unit+".service")
-		if err := os.WriteFile(unitPath, []byte(instanceService(unit, configPath)), 0o644); err != nil {
-			return err
+		unitRaw := []byte(instanceService(unit, configPath))
+		oldUnit, unitErr := os.ReadFile(unitPath)
+		if unitErr != nil || !bytes.Equal(oldUnit, unitRaw) {
+			changed = true
+			unitChanged = true
+		}
+		if err := os.WriteFile(unitPath, unitRaw, 0o644); err != nil {
+			result.Error = err.Error()
+			results = append(results, result)
+			return results, err
+		}
+		results = append(results, result)
+		changedPorts[binding.Port] = changed
+	}
+	// Stop per-port units that are no longer enabled. Disabled ports are
+	// intentionally omitted from DesiredConfig, so their result is reported by
+	// the disable operation rather than as a startup failure.
+
+	if unitChanged {
+		if out, err := a.run("systemctl", "daemon-reload"); err != nil {
+			return results, fmt.Errorf("systemd 重载失败: %v %s", err, out)
 		}
 	}
-
-	if _, err := a.run("systemctl", "daemon-reload"); err != nil {
-		return fmt.Errorf("systemd 重载失败: %w", err)
+	resultByPort := make(map[int]int, len(results))
+	for i := range results {
+		resultByPort[results[i].Port] = i
 	}
 	for port := range desired {
 		unit := instanceUnit(port, "")
-		if out, err := a.run("systemctl", "enable", "--now", unit+".service"); err != nil {
-			return fmt.Errorf("启动端口 %d 的 mita 实例失败: %v %s", port, err, out)
+		if out, err := a.run("systemctl", "enable", unit+".service"); err != nil {
+			if i, ok := resultByPort[port]; ok {
+				results[i].Error = fmt.Sprintf("启用实例失败: %v %s", err, out)
+			}
+			return results, fmt.Errorf("启用端口 %d 的 mita 实例失败: %v %s", port, err, out)
+		}
+		active, _ := a.instanceRunning(port)
+		if changedPorts[port] || !active {
+			verb := "restart"
+			if !active {
+				verb = "start"
+			}
+			if out, err := a.run("systemctl", verb, unit+".service"); err != nil {
+				if i, ok := resultByPort[port]; ok {
+					results[i].Error = fmt.Sprintf("%s 实例失败: %v %s", verb, err, out)
+				}
+				return results, fmt.Errorf("%s 端口 %d 的 mita 实例失败: %v %s", verb, port, err, out)
+			}
+		}
+		if i, ok := resultByPort[port]; ok {
+			running, statusErr := a.instanceRunning(port)
+			results[i].OK = statusErr == nil && running
+			results[i].Running = running
+			results[i].CheckedAt = time.Now()
+			if statusErr != nil {
+				results[i].Error = statusErr.Error()
+			} else if !running {
+				results[i].Error = "systemd 实例启动后未处于 active 状态"
+			}
 		}
 	}
-	return a.removeStaleInstances(desired)
+	if !cfg.Partial {
+		stopped, err := a.removeStaleInstances(desired)
+		if err != nil {
+			return results, err
+		}
+		for _, stoppedInstance := range stopped {
+			for _, disabledPort := range cfg.DisabledPorts {
+				if disabledPort.Port == stoppedInstance.Port {
+					stoppedInstance.PortID = disabledPort.ID
+					break
+				}
+			}
+			results = append(results, stoppedInstance)
+		}
+		for _, disabledPort := range cfg.DisabledPorts {
+			if _, found := findPortResult(results, disabledPort.Port); !found {
+				results = append(results, model.PortInstanceResult{PortID: disabledPort.ID, Port: disabledPort.Port, OK: true, Running: false, CheckedAt: time.Now()})
+			}
+		}
+	}
+	return results, nil
+}
+
+func configDigest(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func findPortResult(results []model.PortInstanceResult, port int) (model.PortInstanceResult, bool) {
+	for _, result := range results {
+		if result.Port == port {
+			return result, true
+		}
+	}
+	return model.PortInstanceResult{}, false
+}
+
+func (a *Agent) instanceRunning(port int) (bool, error) {
+	unit := instanceUnit(port, "") + ".service"
+	out, err := a.run("systemctl", "is-active", unit)
+	if err != nil {
+		return false, fmt.Errorf("%s: %s", err, strings.TrimSpace(out))
+	}
+	return strings.TrimSpace(out) == "active", nil
 }
 
 func egressForPort(cfg *model.EgressConfig, port int) *model.EgressConfig {
@@ -292,19 +426,35 @@ func egressForPort(cfg *model.EgressConfig, port int) *model.EgressConfig {
 	}
 	rules := append([]model.EgressRule(nil), cfg.Rules...)
 	sort.SliceStable(rules, func(i, j int) bool { return rules[i].Order < rules[j].Order })
+	out := &model.EgressConfig{Proxies: []model.EgressProxy{}, Rules: []model.EgressRule{}}
+	usedProxies := map[string]bool{}
 	for _, r := range rules {
 		if len(r.Ports) > 0 && !containsPort(r.Ports, port) {
 			continue
 		}
-		out := &model.EgressConfig{Proxies: []model.EgressProxy{}, Rules: []model.EgressRule{{Action: r.Action, Domains: r.Domains, IPRanges: r.IPRanges, ProxyNames: r.ProxyNames, Enabled: true}}}
+		if !r.Enabled {
+			continue
+		}
+		// Empty conditions mean match all destinations, independently of the
+		// selected inbound port instance.
+		domains := append([]string(nil), r.Domains...)
+		ips := append([]string(nil), r.IPRanges...)
+		if len(domains) == 0 && len(ips) == 0 {
+			domains = []string{"*"}
+			ips = []string{"*"}
+		}
+		out.Rules = append(out.Rules, model.EgressRule{Action: r.Action, Domains: domains, IPRanges: ips, ProxyNames: append([]string(nil), r.ProxyNames...), Enabled: true, Order: len(out.Rules)})
 		for _, name := range r.ProxyNames {
-			if p, ok := proxies[name]; ok && p.Enabled {
+			if p, ok := proxies[name]; ok && p.Enabled && !usedProxies[name] {
 				out.Proxies = append(out.Proxies, p)
+				usedProxies[name] = true
 			}
 		}
-		return out
 	}
-	return nil
+	if len(out.Rules) == 0 {
+		return nil
+	}
+	return out
 }
 
 func containsPort(ports []int, port int) bool {
@@ -347,11 +497,12 @@ WantedBy=multi-user.target
 `, unit, configPath, socket, configPath, configPath)
 }
 
-func (a *Agent) removeStaleInstances(desired map[int]bool) error {
+func (a *Agent) removeStaleInstances(desired map[int]bool) ([]model.PortInstanceResult, error) {
 	entries, err := os.ReadDir("/etc/systemd/system")
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var stopped []model.PortInstanceResult
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasPrefix(name, "merit-mita-") || !strings.HasSuffix(name, ".service") {
@@ -362,12 +513,18 @@ func (a *Agent) removeStaleInstances(desired map[int]bool) error {
 			continue
 		}
 		unit := strings.TrimSuffix(name, ".service")
-		_, _ = a.run("systemctl", "disable", "--now", unit+".service")
+		out, stopErr := a.run("systemctl", "disable", "--now", unit+".service")
+		if stopErr != nil {
+			return stopped, fmt.Errorf("停止已禁用端口 %d 的 mita 实例失败: %v %s", port, stopErr, out)
+		}
+		stopped = append(stopped, model.PortInstanceResult{Port: port, Running: false, OK: true, CheckedAt: time.Now()})
 		_ = os.Remove(filepath.Join("/etc/systemd/system", name))
 		_ = os.Remove(filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json", port)))
 	}
-	_, _ = a.run("systemctl", "daemon-reload")
-	return nil
+	if _, err := a.run("systemctl", "daemon-reload"); err != nil {
+		return stopped, fmt.Errorf("清理实例后 systemd 重载失败: %w", err)
+	}
+	return stopped, nil
 }
 
 func (a *Agent) status(installed bool, lastErr error) model.AgentStatus {
@@ -385,11 +542,39 @@ func (a *Agent) status(installed bool, lastErr error) model.AgentStatus {
 		if v, err := a.run("mita", "version"); err == nil {
 			st.MitaVersion = strings.TrimSpace(v)
 		}
-		if out, err := a.run("mita", "status"); err == nil && strings.Contains(out, "RUNNING") {
-			st.MitaRunning = true
+		st.PortInstances = a.instanceStatuses()
+		for _, instance := range st.PortInstances {
+			if instance.Running {
+				st.MitaRunning = true
+				break
+			}
 		}
 	}
 	return st
+}
+
+func (a *Agent) instanceStatuses() []model.PortInstanceStatus {
+	entries, err := os.ReadDir("/etc/merit-mita")
+	if err != nil {
+		return nil
+	}
+	var out []model.PortInstanceStatus
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		port, err := strconv.Atoi(strings.TrimSuffix(entry.Name(), ".json"))
+		if err != nil {
+			continue
+		}
+		running, statusErr := a.instanceRunning(port)
+		result := model.PortInstanceStatus{Port: port, Running: running}
+		if statusErr != nil {
+			result.Error = statusErr.Error()
+		}
+		out = append(out, result)
+	}
+	return out
 }
 
 // --- process helpers --------------------------------------------------------

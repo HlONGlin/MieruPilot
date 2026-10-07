@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"merit/internal/buildinfo"
 	"merit/internal/model"
 	"merit/internal/store"
 )
@@ -23,7 +24,7 @@ import (
 var webFS embed.FS
 
 // Version is the manager build version.
-var Version = "0.1.0"
+var Version = buildinfo.String()
 
 // Config configures the manager server.
 type Config struct {
@@ -41,6 +42,7 @@ type Server struct {
 	mux       *http.ServeMux
 	version   string
 	panelPath string
+	requestMu sync.RWMutex
 
 	mu       sync.Mutex
 	sessions map[string]time.Time
@@ -52,6 +54,7 @@ type nodeRuntime struct {
 	pending     map[string]*model.Task
 	notify      chan struct{}
 	initialized bool
+	tests       map[string]*model.EgressTestResult
 }
 
 // New creates a manager server, opening the data store.
@@ -73,15 +76,42 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s.panelPath = panelPath
+	for id, tasks := range st.PendingTasks() {
+		runtime := s.nodeRuntime(id)
+		runtime.pending = tasks
+		for taskID, task := range tasks {
+			if task.Kind == model.TaskTestEgress {
+				delete(runtime.pending, taskID)
+			}
+		}
+		_ = st.SetTasks(id, runtime.pending)
+	}
 	s.routes()
 	return s, nil
 }
 
 // Handler returns the root HTTP handler.
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == s.panelPath+"/api/backup/restore" {
+			s.requestMu.Lock()
+			defer s.requestMu.Unlock()
+		} else {
+			s.requestMu.RLock()
+			defer s.requestMu.RUnlock()
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
 
 func (s *Server) routes() {
 	p := s.panelPath
+	assets, _ := fs.Sub(webFS, "web/assets")
+	assetHandler := http.StripPrefix(p+"/assets/", http.FileServer(http.FS(assets)))
+	s.mux.Handle("GET "+p+"/assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		assetHandler.ServeHTTP(w, r)
+	}))
 	s.mux.HandleFunc("GET "+p, s.handleIndex)
 	s.mux.HandleFunc("GET "+p+"/", s.handleIndex)
 
@@ -101,11 +131,14 @@ func (s *Server) routes() {
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/egress", s.auth(s.handleGetEgress))
 	s.mux.Handle("PUT "+p+"/api/nodes/{id}/egress", s.auth(s.handlePutEgress))
 	s.mux.Handle("POST "+p+"/api/nodes/{id}/egress/{proxyId}/test", s.auth(s.handleTestEgress))
+	s.mux.Handle("GET "+p+"/api/nodes/{id}/egress/{proxyId}/test", s.auth(s.handleGetEgressTest))
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/install", s.auth(s.handleInstall))
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/links", s.auth(s.handleLinks))
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/clash.yaml", s.auth(s.handleNodeClash))
 
 	s.mux.Handle("GET "+p+"/api/settings", s.auth(s.handleSettings))
+	s.mux.Handle("GET "+p+"/api/backup", s.auth(s.handleBackup))
+	s.mux.Handle("POST "+p+"/api/backup/restore", s.auth(s.handleRestore))
 	s.mux.Handle("POST "+p+"/api/settings/sub-token/rotate", s.auth(s.handleRotateSubToken))
 
 	s.mux.HandleFunc("GET "+p+"/sub", s.handleSubscription)
@@ -168,7 +201,7 @@ func (s *Server) nodeRuntime(id string) *nodeRuntime {
 	defer s.mu.Unlock()
 	r := s.rt[id]
 	if r == nil {
-		r = &nodeRuntime{pending: map[string]*model.Task{}, notify: make(chan struct{}, 1)}
+		r = &nodeRuntime{pending: map[string]*model.Task{}, notify: make(chan struct{}, 1), tests: map[string]*model.EgressTestResult{}}
 		s.rt[id] = r
 	}
 	return r
@@ -180,15 +213,22 @@ func (s *Server) enqueueSync(n *model.Node) {
 	config := n.BuildDesired()
 	encoded, _ := json.Marshal(config)
 	digest := sha256.Sum256(encoded)
-	taskID := fmt.Sprintf("sync-%x", digest[:8])
+	taskID := fmt.Sprintf("sync-%x-%d", digest[:8], time.Now().UnixNano())
 	// Full desired-state sync supersedes queued port-specific retries and any
 	// older full sync. Keep only the newest desired state for this node.
-	clear(r.pending)
+	for id, task := range r.pending {
+		if task.Kind == model.TaskSync {
+			delete(r.pending, id)
+		}
+	}
 	r.pending[taskID] = &model.Task{
 		ID:        taskID,
 		Kind:      model.TaskSync,
-		Config:    n.BuildDesired(),
+		Config:    config,
 		CreatedAt: time.Now(),
+	}
+	if err := s.store.SetTasks(n.ID, r.pending); err != nil {
+		log.Printf("保存节点 %s 同步任务失败: %v", n.ID, err)
 	}
 	r.mu.Unlock()
 	select {
@@ -246,6 +286,10 @@ func (s *Server) enqueuePortSync(n *model.Node, portID string) error {
 		}
 	}
 	r.pending[taskID] = &model.Task{ID: taskID, Kind: model.TaskSync, Config: cfg, CreatedAt: time.Now()}
+	if err := s.store.SetTasks(n.ID, r.pending); err != nil {
+		r.mu.Unlock()
+		return err
+	}
 	r.mu.Unlock()
 	select {
 	case r.notify <- struct{}{}:
@@ -284,7 +328,14 @@ func (s *Server) pollTasks(id string, wait time.Duration) []*model.Task {
 func (s *Server) clearTask(id, taskID string) {
 	r := s.nodeRuntime(id)
 	r.mu.Lock()
+	previous := r.pending[taskID]
 	delete(r.pending, taskID)
+	if err := s.store.SetTasks(id, r.pending); err != nil {
+		if previous != nil {
+			r.pending[taskID] = previous
+		}
+		log.Printf("保存节点 %s 任务确认失败: %v", id, err)
+	}
 	r.mu.Unlock()
 }
 
@@ -322,7 +373,7 @@ func (s *Server) baseURL(r *http.Request) string {
 // Serve starts the manager HTTP server.
 func (s *Server) Serve() error {
 	log.Printf("merit manager %s listening on %s", s.version, s.cfg.Addr)
-	return http.ListenAndServe(s.cfg.Addr, s.mux)
+	return http.ListenAndServe(s.cfg.Addr, s.Handler())
 }
 
 func (s *Server) webFile(name string) ([]byte, error) {

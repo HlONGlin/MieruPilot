@@ -1,4 +1,4 @@
-package manager
+package netcheck
 
 import (
 	"bufio"
@@ -23,7 +23,7 @@ func TestCheckSOCKS5EgressWithAuthentication(t *testing.T) {
 	_, portText, _ := net.SplitHostPort(listener.Addr().String())
 	port, _ := strconv.Atoi(portText)
 
-	ip, latency, err := checkSOCKS5Egress(model.EgressProxy{Host: "127.0.0.1", Port: port, Username: "test-user", Password: "test-pass"})
+	ip, latency, err := CheckSOCKS5Egress(model.EgressProxy{Host: "127.0.0.1", Port: port, Username: "test-user", Password: "test-pass"})
 	if err != nil {
 		t.Fatal(err)
 	}

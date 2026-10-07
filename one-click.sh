@@ -81,6 +81,15 @@ install_manager() {
     fi
 
     log "Downloading merit binaries for $arch..."
+    if [ -s "$DATA_DIR/merit.json" ]; then
+        backup_dir="$DATA_DIR/backups"
+        mkdir -p "$backup_dir" || die "创建备份目录失败。"
+        chmod 700 "$backup_dir"
+        backup_path="$backup_dir/merit-$(date +%Y%m%d-%H%M%S).json"
+        cp "$DATA_DIR/merit.json" "$backup_path" || die "升级前备份失败。"
+        chmod 600 "$backup_path"
+        log "升级前数据备份：$backup_path"
+    fi
     manager_tmp="$(mktemp "$INSTALL_DIR/.merit-manager.XXXXXX")"
     agent_tmp="$(mktemp "$INSTALL_DIR/.merit-agent.XXXXXX")"
     if ! download "$REPO_RAW/merit-manager-linux-$arch" "$manager_tmp" || \
@@ -145,8 +154,11 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable --now merit-manager.service
+    systemctl daemon-reload || die "systemd 重载失败。"
+    systemctl enable merit-manager.service || die "Manager 开机启动设置失败。"
+    systemctl restart merit-manager.service || die "Manager 启动失败，请查看 journalctl -u merit-manager.service。"
+    systemctl is-active --quiet merit-manager.service || die "Manager 未正常运行。"
+    "$INSTALL_DIR/merit-manager" --version
     host="$(detect_host)"
     log "安装完成，管理面板地址："
     printf 'http://%s:%s%s\n' "$host" "$port" "$panel_path"

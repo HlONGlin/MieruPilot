@@ -21,12 +21,14 @@ import (
 	"strings"
 	"time"
 
+	"merit/internal/buildinfo"
 	"merit/internal/mieru"
 	"merit/internal/model"
+	"merit/internal/netcheck"
 )
 
 // Version is the agent build version.
-var Version = "0.1.0"
+var Version = buildinfo.String()
 
 // Config configures the agent runtime.
 type Config struct {
@@ -166,6 +168,9 @@ func (a *Agent) report(st model.AgentStatus) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("状态上报失败: HTTP %d", resp.StatusCode)
+	}
 	return nil
 }
 
@@ -191,24 +196,44 @@ func (a *Agent) pollTasks(ctx context.Context) ([]*model.Task, error) {
 	return tasks, nil
 }
 
-func (a *Agent) reportResult(res model.TaskResult) {
+func (a *Agent) reportResult(res model.TaskResult) error {
 	body, _ := json.Marshal(res)
 	req, err := http.NewRequest(http.MethodPost, a.cfg.Manager+"/api/agent/result", bytes.NewReader(body))
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", a.cfg.APIKey)
 	resp, err := a.client.Do(req)
-	if err == nil {
-		resp.Body.Close()
+	if err != nil {
+		return err
 	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("任务结果上报失败: HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // --- task execution ---------------------------------------------------------
 
 func (a *Agent) apply(t *model.Task) error {
 	switch t.Kind {
+	case model.TaskTestEgress:
+		result := &model.EgressTestResult{TaskID: t.ID, State: "completed", Source: "agent"}
+		if t.TestProxy == nil {
+			result.Message = "任务缺少落地机配置"
+		} else {
+			result.ProxyID = t.TestProxy.ID
+			ip, latency, err := netcheck.CheckSOCKS5Egress(*t.TestProxy)
+			result.OK, result.ExitIP, result.LatencyMs = err == nil, ip, latency
+			result.Message = "SOCKS5 握手与代理出口检测成功"
+			if err != nil {
+				result.Message = err.Error()
+			}
+		}
+		result.CheckedAt = time.Now()
+		return a.reportResult(model.TaskResult{TaskID: t.ID, OK: result.OK, Message: result.Message, EgressTest: result})
 	case model.TaskSync:
 		msg, portResults, err := a.applyConfig(t.Config)
 		if err != nil && len(portResults) == 0 && t.Config != nil {
@@ -226,7 +251,10 @@ func (a *Agent) apply(t *model.Task) error {
 		}
 		st := a.status(a.mitaInstalled(), err)
 		res.Status = &st
-		a.reportResult(res)
+		if reportErr := a.reportResult(res); reportErr != nil {
+			fmt.Fprintf(os.Stderr, "任务结果回报失败: %v\n", reportErr)
+			return reportErr
+		}
 		return err
 	default:
 		a.reportResult(model.TaskResult{TaskID: t.ID, OK: false, Message: "unknown task"})
@@ -305,6 +333,14 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstan
 		configPath := filepath.Join(configDir, fmt.Sprintf("%d.json", binding.Port))
 		oldRaw, oldErr := os.ReadFile(configPath)
 		changed := oldErr != nil || configDigest(oldRaw) != configDigest(raw)
+		appliedDigest, appliedErr := os.ReadFile(configPath + ".applied")
+		needsApply := appliedErr != nil || strings.TrimSpace(string(appliedDigest)) != configDigest(raw)
+		// Preserve the last confirmed config, not a failed intermediate update.
+		if changed && oldErr == nil && appliedErr == nil && strings.TrimSpace(string(appliedDigest)) == configDigest(oldRaw) {
+			if err := writeConfigAtomic(configPath+".previous", oldRaw); err != nil {
+				return results, fmt.Errorf("备份端口 %d 配置失败: %w", binding.Port, err)
+			}
+		}
 		if changed {
 			if err := writeConfigAtomic(configPath, raw); err != nil {
 				result.Error = err.Error()
@@ -336,7 +372,7 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstan
 			return results, err
 		}
 		results = append(results, result)
-		changedPorts[binding.Port] = changed
+		changedPorts[binding.Port] = changed || needsApply
 	}
 	// Stop per-port units that are no longer enabled. Disabled ports are
 	// intentionally omitted from DesiredConfig, so their result is reported by
@@ -366,6 +402,7 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstan
 				verb = "start"
 			}
 			if out, err := a.run("systemctl", verb, unit+".service"); err != nil {
+				a.restorePreviousConfig(port)
 				if i, ok := resultByPort[port]; ok {
 					results[i].Error = fmt.Sprintf("%s 实例失败: %v %s", verb, err, out)
 				}
@@ -381,6 +418,18 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstan
 				results[i].Error = statusErr.Error()
 			} else if !running {
 				results[i].Error = "systemd 实例启动后未处于 active 状态"
+			}
+			if !results[i].OK {
+				a.restorePreviousConfig(port)
+				return results, fmt.Errorf("端口 %d 应用失败: %s", port, results[i].Error)
+			}
+			configPath := filepath.Join(configDir, fmt.Sprintf("%d.json", port))
+			current, err := os.ReadFile(configPath)
+			if err != nil {
+				return results, err
+			}
+			if err := os.WriteFile(configPath+".applied", []byte(configDigest(current)), 0o600); err != nil {
+				return results, fmt.Errorf("记录端口 %d 已应用配置失败: %w", port, err)
 			}
 		}
 	}
@@ -410,6 +459,24 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstan
 func configDigest(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+// restorePreviousConfig attempts to keep the previous working service available.
+// The task still fails and remains queued; rollback is not reported as applying
+// the newly requested configuration.
+func (a *Agent) restorePreviousConfig(port int) {
+	path := filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json", port))
+	previous, err := os.ReadFile(path + ".previous")
+	if err != nil {
+		return
+	}
+	if err := writeConfigAtomic(path, previous); err != nil {
+		return
+	}
+	if _, err := a.run("chown", "mita:mita", path); err != nil {
+		return
+	}
+	_, _ = a.run("systemctl", "restart", instanceUnit(port, "")+".service")
 }
 
 func writeConfigAtomic(path string, raw []byte) error {
@@ -559,6 +626,8 @@ func (a *Agent) removeStaleInstances(desired map[int]bool) ([]model.PortInstance
 		stopped = append(stopped, model.PortInstanceResult{Port: port, Running: false, OK: true, CheckedAt: time.Now()})
 		_ = os.Remove(filepath.Join("/etc/systemd/system", name))
 		_ = os.Remove(filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json", port)))
+		_ = os.Remove(filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json.applied", port)))
+		_ = os.Remove(filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json.previous", port)))
 	}
 	// Remove orphaned configs too (for example after an interrupted Agent
 	// reinstall where the unit file was already removed).

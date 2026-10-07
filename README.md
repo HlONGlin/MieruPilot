@@ -84,6 +84,26 @@ internal/manager/web  内嵌 Web 面板
 
 ## 编译
 
+前端资源拆分在 `internal/manager/web/index.html`、`assets/style.css` 和 `assets/app.js`，通过随机面板路径下的静态资源接口加载，仍由 Go embed 打包。修改任一资源后需要重新构建 Manager。
+
+待执行同步任务保存于 `merit.json` 的 `tasks` 字段；Manager 重启时恢复，成功确认后从磁盘队列删除。一些一次性测试任务不跨重启恢复。
+
+系统设置提供「导出备份」和「选择备份文件」恢复，限制 16MB。备份包含节点账号及出站凭据。恢复保留当前管理员和管理路径，替换节点与订阅配置，并为恢复节点排队同步。恢复前备份在数据文件旁保存为 `merit.json.before-restore-*.json`，权限 600。备份未包含的旧节点不再由当前 Manager 管理，请在其服务器上停止遗留 Agent/实例。新备份恢复到其他主机时，需要确保 Agent 能连接当前 Manager 地址。
+
+出站检测由所选节点的 Agent 发起，测试路径是“节点 → SOCKS5 落地机 → 出口 IP 检测服务”。它验证 SOCKS5 握手/认证和代理 CONNECT，页面显示测试进度、耗时和出口 IP。耗时代表整个检测过程，不是下载带宽；也不等于验证客户端到 mita 的入站连接。需要更新 Agent 才能执行该测试。结果暂存在 Manager 内存中，重启后可重新测试。
+
+管理程序和 Agent 支持 `--version`，输出版本号、源码提交和提交时间；未提交源码构建会标记 `+modified`。运行日志和面板也会显示该版本信息。
+
+升级脚本在替换 Manager 前，将数据备份到 `/var/lib/merit/backups/`（目录权限 `700`，备份文件 `600`）。Agent 部署命令会明确重启服务，确保加载新二进制。
+
+每端口实例只在配置或服务文件变化、实例停止时重新启动。确认启动成功后记录 `.applied` 配置摘要；新配置启动失败时尝试恢复 `.previous` 配置，失败任务仍保留重试，不会将回滚视为新配置已应用。
+
+前端检查命令：
+
+```sh
+node scripts/check-frontend.cjs
+```
+
 需要 Go 1.24+。
 
 ```sh

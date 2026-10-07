@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"merit/internal/buildinfo"
 	"merit/internal/manager"
 	"merit/internal/store"
 )
@@ -21,7 +22,12 @@ func main() {
 	resetAdmin := flag.Bool("reset-admin", false, "交互式重置管理员账号，保留节点数据")
 	initAdmin := flag.Bool("init-admin", false, "从标准输入读取用户名和密码并初始化管理员账号")
 	hasAdmin := flag.Bool("has-admin", false, "检查是否已经存在管理员账号")
+	version := flag.Bool("version", false, "显示程序版本和源码提交")
 	flag.Parse()
+	if *version {
+		fmt.Println("merit-manager " + buildinfo.String())
+		return
+	}
 
 	if *resetAdmin {
 		if err := resetAdministrator(*data); err != nil {

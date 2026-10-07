@@ -162,11 +162,13 @@ type Task struct {
 	Kind      string         `json:"kind"`
 	Config    *DesiredConfig `json:"config,omitempty"`
 	CreatedAt time.Time      `json:"createdAt"`
+	TestProxy *EgressProxy   `json:"testProxy,omitempty"`
 }
 
 // Task kinds.
 const (
-	TaskSync = "sync"
+	TaskSync       = "sync"
+	TaskTestEgress = "test-egress"
 )
 
 // AgentStatus is a status snapshot reported by an agent.
@@ -196,6 +198,21 @@ type TaskResult struct {
 	Message     string               `json:"message"`
 	Status      *AgentStatus         `json:"status,omitempty"`
 	PortResults []PortInstanceResult `json:"portResults,omitempty"`
+	EgressTest  *EgressTestResult    `json:"egressTest,omitempty"`
+}
+
+// EgressTestResult contains observations only; no proxy credentials are echoed.
+type EgressTestResult struct {
+	TaskID    string    `json:"taskId"`
+	ProxyID   string    `json:"proxyId"`
+	State     string    `json:"state"`
+	OK        bool      `json:"ok"`
+	ExitIP    string    `json:"exitIP,omitempty"`
+	LatencyMs int64     `json:"latencyMs"`
+	Message   string    `json:"message"`
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"createdAt"`
+	CheckedAt time.Time `json:"checkedAt"`
 }
 
 type PortInstanceResult struct {

@@ -134,18 +134,39 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid body"})
 		return
 	}
-	if res.OK || !hasRetryablePortFailure(res) {
-		s.clearTask(node.ID, res.TaskID)
-	} else {
+	rt := s.nodeRuntime(node.ID)
+	rt.mu.Lock()
+	if rt.pending[res.TaskID] == nil {
+		rt.mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": true})
+		return
+	}
+	if task := rt.pending[res.TaskID]; task != nil && task.Kind == model.TaskTestEgress {
+		proxyID := task.TestProxy.ID
+		if result := rt.tests[proxyID]; result != nil && result.TaskID == res.TaskID {
+			result.State, result.OK, result.CheckedAt = "completed", res.OK, time.Now()
+			result.Message = res.Message
+			if res.EgressTest != nil {
+				result.ExitIP, result.LatencyMs = res.EgressTest.ExitIP, res.EgressTest.LatencyMs
+			} else {
+				result.OK, result.Message = false, "Agent 未返回测试数据，请更新 Agent"
+			}
+		}
+		delete(rt.pending, res.TaskID)
+		rt.mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	defer rt.mu.Unlock()
+	if !res.OK {
 		// Keep failed sync work available so the agent can retry after fixing
 		// transient issues such as unavailable mita or invalid permissions.
-		runtime := s.nodeRuntime(node.ID)
 		select {
-		case runtime.notify <- struct{}{}:
+		case rt.notify <- struct{}{}:
 		default:
 		}
 	}
-	_, _ = s.store.Update(node.ID, func(n *model.Node) error {
+	_, saveErr := s.store.Update(node.ID, func(n *model.Node) error {
 		n.LastSeen = time.Now()
 		if res.Status != nil {
 			for _, instance := range res.Status.PortInstances {
@@ -185,22 +206,21 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		} else {
 			n.LastError = ""
 		}
-		if res.Status != nil {
-			for _, disabled := range res.Status.PortInstances {
-				for _, p := range n.Ports {
-					if p.Port == disabled.Port {
-						p.InstanceRunning = disabled.Running
-						if disabled.Error != "" {
-							p.InstanceError = disabled.Error
-						} else if disabled.Running {
-							p.InstanceError = ""
-						}
-					}
-				}
-			}
-		}
 		return nil
 	})
+	if saveErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "保存任务状态失败"})
+		return
+	}
+	if res.OK {
+		task := rt.pending[res.TaskID]
+		delete(rt.pending, res.TaskID)
+		if err := s.store.SetTasks(node.ID, rt.pending); err != nil {
+			rt.pending[res.TaskID] = task
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "保存任务确认失败"})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

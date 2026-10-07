@@ -18,7 +18,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(page)
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(strings.ReplaceAll(string(page), "__PANEL_PATH__", s.panelPath)))
 }
 
 // --- auth -------------------------------------------------------------------
@@ -199,12 +200,58 @@ func (s *Server) handleTestEgress(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "出站不存在"})
 		return
 	}
-	ip, latency, err := checkSOCKS5Egress(*proxy)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": err.Error()})
+	if !n.Registered || time.Since(n.LastSeen) > 90*time.Second {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "节点离线，请等待 Agent 上线后再测试"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "latencyMs": latency, "exitIP": ip, "message": "SOCKS5 认证及代理出口测试成功"})
+	rt := s.nodeRuntime(n.ID)
+	rt.mu.Lock()
+	if previous := rt.tests[proxy.ID]; previous != nil && previous.State == "pending" && time.Since(previous.CreatedAt) < time.Minute {
+		copyResult := *previous
+		rt.mu.Unlock()
+		writeJSON(w, http.StatusAccepted, copyResult)
+		return
+	}
+	for id, task := range rt.pending {
+		if task.Kind == model.TaskTestEgress && task.TestProxy != nil && task.TestProxy.ID == proxy.ID {
+			delete(rt.pending, id)
+		}
+	}
+	taskID := "test-egress-" + mieru.RandomID()
+	result := &model.EgressTestResult{TaskID: taskID, ProxyID: proxy.ID, State: "pending", Source: "agent", CreatedAt: time.Now(), Message: "等待节点执行 SOCKS5 测试"}
+	proxyCopy := *proxy
+	rt.tests[proxy.ID] = result
+	rt.pending[taskID] = &model.Task{ID: taskID, Kind: model.TaskTestEgress, TestProxy: &proxyCopy, CreatedAt: time.Now()}
+	copyResult := *result
+	rt.mu.Unlock()
+	select {
+	case rt.notify <- struct{}{}:
+	default:
+	}
+	writeJSON(w, http.StatusAccepted, copyResult)
+}
+
+func (s *Server) handleGetEgressTest(w http.ResponseWriter, r *http.Request) {
+	n := s.store.Node(r.PathValue("id"))
+	if n == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
+		return
+	}
+	rt := s.nodeRuntime(n.ID)
+	rt.mu.Lock()
+	result := rt.tests[r.PathValue("proxyId")]
+	if result == nil {
+		rt.mu.Unlock()
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "尚未测试或 Manager 已重启"})
+		return
+	}
+	if result.State == "pending" && time.Since(result.CreatedAt) >= time.Minute {
+		result.State, result.Message = "timeout", "节点未在一分钟内返回结果，请检查 Agent 版本和日志"
+		delete(rt.pending, result.TaskID)
+	}
+	copyResult := *result
+	rt.mu.Unlock()
+	writeJSON(w, http.StatusOK, copyResult)
 }
 
 func validateEgress(cfg *model.EgressConfig) error {
@@ -636,8 +683,11 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now merit-agent
-echo "==> merit-agent 已启动，请返回面板查看节点状态。"
+systemctl enable merit-agent
+systemctl restart merit-agent
+systemctl is-active --quiet merit-agent || { echo "Agent 启动失败，请查看 journalctl -u merit-agent" >&2; exit 1; }
+/usr/local/bin/merit-agent --version
+echo "==> merit-agent 已更新并重新启动，请返回面板查看节点状态。"
 `
 }
 

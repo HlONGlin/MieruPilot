@@ -39,9 +39,10 @@ type Settings struct {
 }
 
 type persisted struct {
-	Admin    *Admin        `json:"admin"`
-	Settings *Settings     `json:"settings"`
-	Nodes    []*model.Node `json:"nodes"`
+	Admin    *Admin                            `json:"admin"`
+	Settings *Settings                         `json:"settings"`
+	Nodes    []*model.Node                     `json:"nodes"`
+	Tasks    map[string]map[string]*model.Task `json:"tasks,omitempty"`
 }
 
 // Store is a concurrency safe JSON backed data store.
@@ -164,7 +165,10 @@ func (s *Store) SubToken() string {
 		if _, err := rand.Read(token); err != nil {
 			return ""
 		}
-		s.data.Settings = &Settings{SubToken: hex.EncodeToString(token)}
+		if s.data.Settings == nil {
+			s.data.Settings = &Settings{}
+		}
+		s.data.Settings.SubToken = hex.EncodeToString(token)
 		_ = s.saveLocked()
 	}
 	return s.data.Settings.SubToken
@@ -204,8 +208,13 @@ func (s *Store) RotateSubToken() (string, error) {
 	if _, err := rand.Read(token); err != nil {
 		return "", err
 	}
-	s.data.Settings = &Settings{SubToken: hex.EncodeToString(token)}
+	if s.data.Settings == nil {
+		s.data.Settings = &Settings{}
+	}
+	previous := s.data.Settings.SubToken
+	s.data.Settings.SubToken = hex.EncodeToString(token)
 	if err := s.saveLocked(); err != nil {
+		s.data.Settings.SubToken = previous
 		return "", err
 	}
 	return s.data.Settings.SubToken, nil
@@ -216,7 +225,9 @@ func (s *Store) Nodes() []*model.Node {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]*model.Node, len(s.data.Nodes))
-	copy(out, s.data.Nodes)
+	for i, node := range s.data.Nodes {
+		out[i] = cloneNode(node)
+	}
 	return out
 }
 
@@ -224,7 +235,7 @@ func (s *Store) Nodes() []*model.Node {
 func (s *Store) Node(id string) *model.Node {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.index[id]
+	return cloneNode(s.index[id])
 }
 
 // NodeByAPIKey returns a node matching the given API key.
@@ -233,7 +244,7 @@ func (s *Store) NodeByAPIKey(key string) *model.Node {
 	defer s.mu.RUnlock()
 	for _, n := range s.data.Nodes {
 		if n.APIKey == key {
-			return n
+			return cloneNode(n)
 		}
 	}
 	return nil
@@ -243,12 +254,21 @@ func (s *Store) NodeByAPIKey(key string) *model.Node {
 func (s *Store) AddNode(n *model.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if n == nil || n.ID == "" || s.index[n.ID] != nil {
+		return errors.New("invalid or duplicate node")
+	}
+	n = cloneNode(n)
 	if n.Ports == nil {
 		n.Ports = []*model.Port{}
 	}
 	s.data.Nodes = append(s.data.Nodes, n)
 	s.index[n.ID] = n
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.data.Nodes = s.data.Nodes[:len(s.data.Nodes)-1]
+		delete(s.index, n.ID)
+		return err
+	}
+	return nil
 }
 
 // Update mutates a node under lock and persists the result.
@@ -259,13 +279,30 @@ func (s *Store) Update(id string, fn func(*model.Node) error) (*model.Node, erro
 	if n == nil {
 		return nil, errors.New("node not found")
 	}
-	if err := fn(n); err != nil {
+	candidate := cloneNode(n)
+	if err := fn(candidate); err != nil {
 		return nil, err
 	}
+	if candidate.ID != n.ID {
+		return nil, errors.New("node ID cannot change")
+	}
+	position := -1
+	for i, node := range s.data.Nodes {
+		if node.ID == id {
+			position = i
+			break
+		}
+	}
+	if position < 0 {
+		return nil, errors.New("node not found")
+	}
+	s.data.Nodes[position] = candidate
 	if err := s.saveLocked(); err != nil {
+		s.data.Nodes[position] = n
 		return nil, err
 	}
-	return n, nil
+	s.index[id] = candidate
+	return cloneNode(candidate), nil
 }
 
 // Delete removes a node.
@@ -275,13 +312,34 @@ func (s *Store) Delete(id string) error {
 	if _, ok := s.index[id]; !ok {
 		return errors.New("node not found")
 	}
-	delete(s.index, id)
-	out := s.data.Nodes[:0]
+	previous := s.data.Nodes
+	out := make([]*model.Node, 0, len(previous))
 	for _, n := range s.data.Nodes {
 		if n.ID != id {
 			out = append(out, n)
 		}
 	}
 	s.data.Nodes = out
-	return s.saveLocked()
+	oldTasks, hadTasks := s.data.Tasks[id]
+	delete(s.data.Tasks, id)
+	if err := s.saveLocked(); err != nil {
+		s.data.Nodes = previous
+		if hadTasks {
+			s.data.Tasks[id] = oldTasks
+		}
+		return err
+	}
+	delete(s.index, id)
+	return nil
+}
+
+func cloneNode(node *model.Node) *model.Node {
+	if node == nil {
+		return nil
+	}
+	raw, _ := json.Marshal(node)
+	var copy model.Node
+	_ = json.Unmarshal(raw, &copy)
+	copy.SeenIP, copy.Online = node.SeenIP, node.Online
+	return &copy
 }

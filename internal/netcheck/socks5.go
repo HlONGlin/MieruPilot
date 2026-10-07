@@ -1,4 +1,4 @@
-package manager
+package netcheck
 
 import (
 	"bufio"
@@ -14,9 +14,7 @@ import (
 	"merit/internal/model"
 )
 
-const socks5TestTarget = "api.ipify.org:80"
-
-func checkSOCKS5Egress(proxy model.EgressProxy) (string, int64, error) {
+func CheckSOCKS5Egress(proxy model.EgressProxy) (string, int64, error) {
 	started := time.Now()
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(proxy.Host, strconv.Itoa(proxy.Port)), 5*time.Second)
 	if err != nil {
@@ -103,7 +101,7 @@ func checkSOCKS5Egress(proxy model.EgressProxy) (string, int64, error) {
 		return "", 0, fmt.Errorf("出口检测服务返回 HTTP %d", resp.StatusCode)
 	}
 	ip := strings.TrimSpace(string(body))
-	if ip == "" || strings.ContainsAny(ip, "\r\n ") {
+	if net.ParseIP(ip) == nil {
 		return "", 0, errors.New("出口检测未返回有效 IP")
 	}
 	return ip, time.Since(started).Milliseconds(), nil

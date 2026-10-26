@@ -140,6 +140,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET "+p+"/api/backup", s.auth(s.handleBackup))
 	s.mux.Handle("POST "+p+"/api/backup/restore", s.auth(s.handleRestore))
 	s.mux.Handle("POST "+p+"/api/settings/sub-token/rotate", s.auth(s.handleRotateSubToken))
+	s.mux.Handle("GET "+p+"/api/update/check", s.auth(s.handleCheckUpdate))
 
 	s.mux.HandleFunc("GET "+p+"/sub", s.handleSubscription)
 	s.mux.HandleFunc("GET "+p+"/install.sh", s.handleInstallScript)

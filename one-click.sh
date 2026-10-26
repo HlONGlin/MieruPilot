@@ -2,7 +2,9 @@
 
 set -u
 
-REPO_RAW="https://github.com/HlONGlin/MieruPilot/raw/main/dist"
+# 默认下载最新 Release；可用 MERIT_RELEASE_BASE 固定版本，例如：
+# MERIT_RELEASE_BASE="https://github.com/HlONGlin/MieruPilot/releases/download/v1.1.0"
+RELEASE_BASE="${MERIT_RELEASE_BASE:-https://github.com/HlONGlin/MieruPilot/releases/latest/download}"
 INSTALL_DIR="/opt/merit"
 DATA_DIR="/var/lib/merit"
 SERVICE_FILE="/etc/systemd/system/merit-manager.service"
@@ -92,13 +94,13 @@ install_manager() {
     fi
     manager_tmp="$(mktemp "$INSTALL_DIR/.merit-manager.XXXXXX")"
     agent_tmp="$(mktemp "$INSTALL_DIR/.merit-agent.XXXXXX")"
-    if ! download "$REPO_RAW/merit-manager-linux-$arch" "$manager_tmp" || \
-       ! download "$REPO_RAW/merit-agent-linux-$arch" "$agent_tmp"; then
+    if ! download "$RELEASE_BASE/merit-manager-linux-$arch" "$manager_tmp" || \
+       ! download "$RELEASE_BASE/merit-agent-linux-$arch" "$agent_tmp"; then
         rm -f "$manager_tmp" "$agent_tmp"
         if [ "$was_running" -eq 1 ]; then
             systemctl start merit-manager.service || true
         fi
-        die "Download failed. Existing installation was kept."
+        die "Download failed. Check that the latest release provides merit-manager-linux-$arch and merit-agent-linux-$arch. Existing installation was kept."
     fi
     chmod 0755 "$manager_tmp" "$agent_tmp"
     mv -f "$manager_tmp" "$INSTALL_DIR/merit-manager"

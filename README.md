@@ -141,7 +141,7 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 
 1. 运行一键脚本，选择 `1. 安装或更新 Manager`
 2. 脚本会自动：
-   - 根据服务器架构下载 Manager 和 Agent
+   - 从 GitHub 最新 Release 下载 Manager 和 Agent
    - 安装到 `/opt/merit`
    - 创建 `systemd` 服务
    - 提示设置管理员账号和密码
@@ -150,6 +150,8 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
    http://服务器IP:3000/panel/随机字符串
    ```
 4. 打开管理地址，使用刚设置的账号登录
+
+> 如需固定版本，可在运行脚本前设置 `MERIT_RELEASE_BASE`，例如 `MERIT_RELEASE_BASE=https://github.com/HlONGlin/MieruPilot/releases/download/v1.1.0`。
 
 ### 📦 手动安装
 

@@ -9,6 +9,7 @@ import (
 
 	"merit/internal/mieru"
 	"merit/internal/model"
+	"merit/internal/updater"
 )
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -455,9 +456,12 @@ func (e *simpleError) Error() string { return e.msg }
 
 func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Enabled    *bool   `json:"enabled"`
-		Label      *string `json:"label"`
-		Regenerate bool    `json:"regenerate"`
+		Enabled        *bool   `json:"enabled"`
+		Label          *string `json:"label"`
+		Regenerate     bool    `json:"regenerate"`
+		TrafficLimit   *int64  `json:"trafficLimit"`
+		BandwidthLimit *int64  `json:"bandwidthLimit"`
+		ResetTraffic   bool    `json:"resetTraffic"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求无效"})
@@ -477,6 +481,16 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 		if req.Regenerate {
 			p.Username = mieru.GenerateUsername()
 			p.Password = mieru.GeneratePassword()
+		}
+		if req.TrafficLimit != nil {
+			p.TrafficLimit = *req.TrafficLimit
+		}
+		if req.BandwidthLimit != nil {
+			p.BandwidthLimit = *req.BandwidthLimit
+		}
+		if req.ResetTraffic {
+			p.TrafficUsed = 0
+			p.TrafficResetAt = time.Now()
 		}
 		return nil
 	})
@@ -732,4 +746,25 @@ func validToken(s string) bool {
 		}
 	}
 	return true
+}
+
+// handleCheckUpdate checks for available updates.
+func (s *Server) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
+	release, err := updater.CheckUpdate(s.version)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if release == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"upToDate": true})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"upToDate":    false,
+		"version":     release.TagName,
+		"name":        release.Name,
+		"body":        release.Body,
+		"publishedAt": release.PublishedAt,
+	})
 }

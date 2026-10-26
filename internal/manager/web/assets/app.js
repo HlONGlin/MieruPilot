@@ -383,7 +383,7 @@
           const s = await api("GET", "/api/settings");
           state.settings = s;
           document.querySelector(".content").innerHTML =
-            `<div class="page-head"><div><h2>系统设置</h2><p>管理订阅地址与系统信息</p></div></div><div class="panel"><div class="panel-head"><h3>公开订阅地址</h3><span class="pill">Token 保护</span></div><p class="muted">将此地址填入 Clash Verge、mihomo 等客户端，即可订阅全部已启用节点。</p><div class="command"><code>${esc(s.subscriptionURL)}</code><button class="btn" data-copy="${esc(s.subscriptionURL)}">复制地址</button><button class="btn danger" data-rotate>重置令牌</button></div></div><div class="panel"><div class="panel-head"><h3>使用流程</h3></div><ol class="muted"><li>添加节点，复制部署命令到目标服务器。</li><li>节点上线后生成端口，等待 Agent 同步配置。</li><li>复制 mierus 链接，或使用上方订阅地址导入客户端。</li></ol></div><div class="panel"><div class="panel-head"><h3>系统信息</h3></div><div class="muted">Manager 版本：${esc(s.version || "—")}<br>数据文件：服务端本地 JSON 文件</div></div>`;
+            `<div class="page-head"><div><h2>系统设置</h2><p>管理订阅地址与系统信息</p></div></div><div class="panel"><div class="panel-head"><h3>公开订阅地址</h3><span class="pill">Token 保护</span></div><p class="muted">将此地址填入 Clash Verge、mihomo 等客户端，即可订阅全部已启用节点。</p><div class="command"><code>${esc(s.subscriptionURL)}</code><button class="btn" data-copy="${esc(s.subscriptionURL)}">复制地址</button><button class="btn danger" data-rotate>重置令牌</button></div></div><div class="panel"><div class="panel-head"><h3>使用流程</h3></div><ol class="muted"><li>添加节点，复制部署命令到目标服务器。</li><li>节点上线后生成端口，等待 Agent 同步配置。</li><li>复制 mierus 链接，或使用上方订阅地址导入客户端。</li></ol></div><div class="panel"><div class="panel-head"><h3>系统信息</h3><span id="updateBadge"></span></div><div class="muted">Manager 版本：${esc(s.version || "—")}<br>数据文件：服务端本地 JSON 文件</div><div class="toolbar" style="margin-top:12px"><button class="btn" data-check-update>检查更新</button></div><div id="updateInfo" class="muted" style="margin-top:12px"></div></div>`;
           document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="panel"><h3>备份与恢复</h3><p class="muted">备份包含节点账号、出站凭据与订阅令牌，请妥善保存。恢复会替换节点配置，保留当前管理员与管理地址，并自动同步节点。</p><div class="toolbar"><a class="btn" href="${url('/api/backup')}">导出备份</a><label class="btn">选择备份文件<input id="backupFile" type="file" accept=".json,application/json" hidden></label></div><p id="backupResult" class="muted"></p></section>`);
           document.getElementById('backupFile').onchange = async event => {
             const file = event.target.files[0];
@@ -400,6 +400,7 @@
             } catch (error) { feedback.textContent = error.message; }
             finally { event.target.value = ''; }
           };
+          document.querySelector('[data-check-update]')?.addEventListener('click', checkUpdate);
           bindGlobal();
         } catch (e) {
           document.querySelector(".content").innerHTML =
@@ -915,6 +916,44 @@
           button.setAttribute('aria-controls', button.dataset.target);
         });
       };
+      function formatTraffic(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const k = 1024;
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + units[i];
+      }
+      async function checkUpdate() {
+        const btn = document.querySelector('[data-check-update]');
+        const info = document.getElementById('updateInfo');
+        const badge = document.getElementById('updateBadge');
+        if (!btn || !info) return;
+        btn.disabled = true;
+        btn.textContent = '检查中...';
+        info.textContent = '';
+        badge.textContent = '';
+        try {
+          const result = await api('GET', '/api/update/check');
+          if (result.upToDate) {
+            info.innerHTML = '<span style="color: #22c55e">✓ 已是最新版本</span>';
+            badge.innerHTML = '<span class="pill" style="background: #22c55e">最新</span>';
+          } else {
+            const releaseURL = `https://github.com/HlONGlin/MieruPilot/releases/tag/${esc(result.version)}`;
+            info.innerHTML = `<div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-top:8px">
+              <div style="margin-bottom:8px"><strong style="color:#f59e0b">🎉 发现新版本：${esc(result.version)}</strong></div>
+              <div class="muted" style="margin-bottom:12px">发布于：${new Date(result.publishedAt).toLocaleString()}</div>
+              <div class="muted" style="margin-bottom:12px;max-height:200px;overflow-y:auto;white-space:pre-wrap">${esc(result.body || result.name)}</div>
+              <a href="${releaseURL}" target="_blank" class="btn primary" style="display:inline-block">前往下载</a>
+            </div>`;
+            badge.innerHTML = '<span class="pill" style="background: #f59e0b">有更新</span>';
+          }
+        } catch (error) {
+          info.innerHTML = `<span style="color: #ef4444">✗ ${esc(error.message)}</span>`;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '检查更新';
+        }
+      }
       async function init() {
         try {
           state.me = await api("GET", "/api/me");

@@ -35,6 +35,12 @@ type Port struct {
 	InstanceSyncedAt time.Time `json:"instanceSyncedAt,omitempty"`
 	LastSyncAttempt  time.Time `json:"lastSyncAttempt,omitempty"`
 	InstanceError    string    `json:"instanceError,omitempty"`
+
+	// Traffic control and statistics
+	TrafficLimit     int64     `json:"trafficLimit,omitempty"`     // Monthly limit in bytes, 0 = unlimited
+	TrafficUsed      int64     `json:"trafficUsed,omitempty"`      // Used traffic in bytes
+	TrafficResetAt   time.Time `json:"trafficResetAt,omitempty"`   // When the traffic counter was last reset
+	BandwidthLimit   int64     `json:"bandwidthLimit,omitempty"`   // Speed limit in bytes/sec, 0 = unlimited
 }
 
 // Node represents one managed host running the merit agent and mita.
@@ -186,9 +192,11 @@ type AgentStatus struct {
 }
 
 type PortInstanceStatus struct {
-	Port    int    `json:"port"`
-	Running bool   `json:"running"`
-	Error   string `json:"error,omitempty"`
+	Port         int   `json:"port"`
+	Running      bool  `json:"running"`
+	Error        string `json:"error,omitempty"`
+	TrafficUsed  int64 `json:"trafficUsed,omitempty"`  // Traffic used since last report
+	TotalTraffic int64 `json:"totalTraffic,omitempty"` // Total accumulated traffic
 }
 
 // TaskResult is the result of executing a Task.

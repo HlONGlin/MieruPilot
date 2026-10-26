@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Get version
+        id: version
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+
+      - name: Build Manager - Linux AMD64
+        run: |
+          GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-s -w -X merit/internal/buildinfo.Version=${{ steps.version.outputs.VERSION }} \
+            -X merit/internal/buildinfo.Commit=${{ steps.version.outputs.COMMIT_HASH }} \
+            -X merit/internal/buildinfo.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" \
+            -o dist/merit-manager-linux-amd64 \
+            ./cmd/manager
+
+      - name: Build Manager - Linux ARM64
+        run: |
+          GOOS=linux GOARCH=arm64 go build \
+            -ldflags="-s -w -X merit/internal/buildinfo.Version=${{ steps.version.outputs.VERSION }} \
+            -X merit/internal/buildinfo.Commit=${{ steps.version.outputs.COMMIT_HASH }} \
+            -X merit/internal/buildinfo.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" \
+            -o dist/merit-manager-linux-arm64 \
+            ./cmd/manager
+
+      - name: Build Manager - Windows AMD64
+        run: |
+          GOOS=windows GOARCH=amd64 go build \
+            -ldflags="-s -w -X merit/internal/buildinfo.Version=${{ steps.version.outputs.VERSION }} \
+            -X merit/internal/buildinfo.Commit=${{ steps.version.outputs.COMMIT_HASH }} \
+            -X merit/internal/buildinfo.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" \
+            -o dist/merit-manager-windows-amd64.exe \
+            ./cmd/manager
+
+      - name: Build Manager - macOS AMD64
+        run: |
+          GOOS=darwin GOARCH=amd64 go build \
+            -ldflags="-s -w -X merit/internal/buildinfo.Version=${{ steps.version.outputs.VERSION }} \
+            -X merit/internal/buildinfo.Commit=${{ steps.version.outputs.COMMIT_HASH }} \
+            -X merit/internal/buildinfo.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" \
+            -o dist/merit-manager-darwin-amd64 \
+            ./cmd/manager
+
+      - name: Build Manager - macOS ARM64
+        run: |
+          GOOS=darwin GOARCH=arm64 go build \
+            -ldflags="-s -w -X merit/internal/buildinfo.Version=${{ steps.version.outputs.VERSION }} \
+            -X merit/internal/buildinfo.Commit=${{ steps.version.outputs.COMMIT_HASH }} \
+            -X merit/internal/buildinfo.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" \
+            -o dist/merit-manager-darwin-arm64 \
+            ./cmd/manager
+
+      - name: Build Agent - Linux AMD64
+        run: |
+          GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-s -w -X merit/internal/buildinfo.Version=${{ steps.version.outputs.VERSION }} \
+            -X merit/internal/buildinfo.Commit=${{ steps.version.outputs.COMMIT_HASH }} \
+            -X merit/internal/buildinfo.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" \
+            -o dist/merit-agent-linux-amd64 \
+            ./cmd/agent
+
+      - name: Build Agent - Linux ARM64
+        run: |
+          GOOS=linux GOARCH=arm64 go build \
+            -ldflags="-s -w -X merit/internal/buildinfo.Version=${{ steps.version.outputs.VERSION }} \
+            -X merit/internal/buildinfo.Commit=${{ steps.version.outputs.COMMIT_HASH }} \
+            -X merit/internal/buildinfo.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" \
+            -o dist/merit-agent-linux-arm64 \
+            ./cmd/agent
+
+      - name: Calculate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat > release_notes.md << 'EOF'
+          ## 🎉 MieruPilot ${{ steps.version.outputs.VERSION }}
+
+          ### ✨ 新特性
+
+          - 🔄 **自动更新检查**：支持从 GitHub Releases 检查和下载最新版本
+          - 📊 **流量管理**：
+            - 实时流量统计
+            - 月度流量限制
+            - 带宽速度控制
+            - 自动/手动流量重置
+          - 🎨 **美化文档**：全新的 README 布局和详细说明
+
+          ### 📦 下载说明
+
+          根据你的系统选择对应的版本：
+
+          | 平台 | 架构 | Manager | Agent |
+          |------|------|---------|-------|
+          | Linux | x86_64 | `merit-manager-linux-amd64` | `merit-agent-linux-amd64` |
+          | Linux | ARM64 | `merit-manager-linux-arm64` | `merit-agent-linux-arm64` |
+          | Windows | x86_64 | `merit-manager-windows-amd64.exe` | - |
+          | macOS | Intel | `merit-manager-darwin-amd64` | - |
+          | macOS | Apple Silicon | `merit-manager-darwin-arm64` | - |
+
+          ### 🚀 快速安装
+
+          使用一键脚本安装或更新：
+
+          ```bash
+          bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
+          ```
+
+          ### ✅ 校验文件完整性
+
+          下载后请验证文件哈希值：
+
+          ```bash
+          sha256sum -c SHA256SUMS
+          ```
+
+          ### 📖 完整文档
+
+          查看 [README.md](https://github.com/HlONGlin/MieruPilot#readme) 获取详细使用说明。
+
+          ---
+
+          **构建信息**
+          - 版本：${{ steps.version.outputs.VERSION }}
+          - 提交：${{ steps.version.outputs.COMMIT_HASH }}
+          - 时间：${{ steps.version.outputs.BUILD_TIME }}
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/merit-manager-linux-amd64
+            dist/merit-manager-linux-arm64
+            dist/merit-manager-windows-amd64.exe
+            dist/merit-manager-darwin-amd64
+            dist/merit-manager-darwin-arm64
+            dist/merit-agent-linux-amd64
+            dist/merit-agent-linux-arm64
+            dist/SHA256SUMS
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

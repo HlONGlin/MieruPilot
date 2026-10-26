@@ -712,8 +712,9 @@ func installScript(base, key string) string {
 	return `#!/bin/sh
 set -eu
 
-MANAGER="` + base + `"
-KEY="` + key + `"
+	MANAGER="` + base + `"
+	KEY="` + key + `"
+	RELEASE_BASE="https://github.com/HlONGlin/MieruPilot/releases/latest/download"
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "请以 root 运行：curl -fsSL ` + base + `/install.sh | sudo bash -s -- --key ` + key + `" >&2
@@ -726,10 +727,10 @@ case "$(uname -m)" in
 	*) echo "不支持的架构: $(uname -m)" >&2; exit 1 ;;
 esac
 
-echo "==> 下载 merit-agent ($ARCH)"
+echo "==> 下载最新 merit-agent ($ARCH)"
 agent_tmp="$(mktemp /tmp/merit-agent.XXXXXX)"
-if ! curl -fsSL "$MANAGER/download/agent?os=linux&arch=$ARCH" -o "$agent_tmp"; then
-  echo "下载 merit-agent 失败，请检查 Manager 的 agent 文件是否存在：$MANAGER/download/agent?os=linux&arch=$ARCH" >&2
+if ! curl -fsSL "$RELEASE_BASE/merit-agent-linux-$ARCH" -o "$agent_tmp"; then
+  echo "下载最新 merit-agent 失败，请检查 GitHub Release 或网络连接。" >&2
   rm -f "$agent_tmp"
   exit 1
 fi
@@ -825,4 +826,34 @@ func (s *Server) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 		"body":        release.Body,
 		"publishedAt": release.PublishedAt,
 	})
+}
+
+// handleApplyUpdate downloads and verifies the latest Manager release, then
+// schedules a restart after the HTTP response has been delivered.
+func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
+	s.requestMu.Lock()
+	defer s.requestMu.Unlock()
+	release, err := updater.CheckUpdate(s.version)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+	if release == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"updated": false, "message": "当前已经是最新版本"})
+		return
+	}
+	executable, err := updater.CurrentExecutable()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "无法定位当前 Manager 程序: " + err.Error()})
+		return
+	}
+	if err := updater.DownloadAndVerify(release, "manager", executable); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := updater.ScheduleRestart(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"updated": true, "version": release.TagName, "message": "更新完成，Manager 将自动重启"})
 }

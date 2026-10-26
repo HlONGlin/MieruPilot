@@ -426,6 +426,7 @@
             finally { event.target.value = ''; }
           };
           document.querySelector('[data-check-update]')?.addEventListener('click', checkUpdate);
+          document.querySelector('[data-apply-update]')?.addEventListener('click', applyUpdate);
           bindGlobal();
         } catch (e) {
           document.querySelector(".content").innerHTML =
@@ -668,7 +669,7 @@
             ? '<button type="button" class="btn danger" data-force-delete>强制移除记录</button>'
             : '<button type="button" class="btn" data-edit-node>编辑信息</button><button type="button" class="btn danger" data-delete-node>删除节点</button>',
           notice = n.deleting
-            ? `<div class="panel" style="border-color:var(--red)"><p style="margin:0">正在清理远程 Agent、所有 mita 端口与账号，清理完成后节点会自动从面板移除。若目标机已离线且无法恢复，可强制移除记录。</p>${n.lastError ? `<p class="muted" style="margin:8px 0 0;color:var(--red)">${esc(n.lastError)}</p>` : ""}</div>`
+           ? `<div class="panel" style="border-color:var(--red)"><p style="margin:0">正在清理远程 Agent、所有 mita 端口与账号，清理完成后节点会自动从面板移除。若目标机已离线且无法恢复，可强制移除记录。</p>${n.lastError ? `<p class="muted" style="margin:8px 0 0;color:var(--red)">${esc(n.lastError)}</p>` : ""}${String(n.lastError || "").includes("版本过旧") ? `<p style="margin:12px 0 0">请复制上方最新部署命令，在目标机重新执行。Agent 更新后会自动继续清理。</p>` : ""}</div>`
             : "";
         return `<button type="button" class="back" data-back>← 返回节点总览</button><div class="page-head"><div><h2>${esc(n.name)} <span class="state ${cl}">${st}</span></h2><p>${esc(n.address || n.seenIP || "等待 Agent 上线")} · 最后在线 ${ago(n.lastSeen)}</p></div><div class="toolbar">${actions}</div></div>${notice}<div class="panel"><div class="panel-head"><h3>① 部署 Agent</h3><span class="muted">在目标服务器以 root 执行</span></div><div class="command"><code>${esc(install.command || "部署命令暂不可用")}</code><button type="button" class="btn" data-copy="${esc(install.command || "")}">复制命令</button></div><div class="form-row" style="margin-top:16px"><div class="field"><label>公网 IP / 地址</label><input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || "自动探测")}"></div><div class="field"><label>域名（可选）</label><input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div><button type="button" class="btn primary" data-save-node>保存节点信息</button></div><p class="muted" style="font-size:12px;margin:12px 0 0">系统：${esc(n.os || "—")} · 架构：${esc(n.arch || "—")} · mita：${esc(n.mitaVer || "—")} · Agent：${esc(n.agentVer || "—")}</p></div><div class="panel"><div class="panel-head"><h3>② 端口与账号</h3><span class="muted">点击“展开”查看该端口的 Mieru 和 Clash 操作</span><button type="button" class="btn primary" data-add-port>＋ 生成端口</button></div>${
           ports.length
@@ -1012,6 +1013,23 @@
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + units[i];
       }
+      async function applyUpdate() {
+        const btn = document.querySelector('[data-apply-update]');
+        const info = document.getElementById('updateInfo');
+        if (!btn || !info || !confirm('确认下载并安装最新 Manager？更新过程中面板会短暂重启。')) return;
+        btn.disabled = true;
+        btn.textContent = '更新中...';
+        info.innerHTML = '<span class="muted">正在下载并校验更新，请不要关闭页面...</span>';
+        try {
+          const result = await api('POST', '/api/update/apply');
+          info.innerHTML = `<span style="color:#22c55e">✓ ${esc(result.message || '更新已完成，Manager 即将重启')}</span>`;
+          setTimeout(() => checkUpdate(), 8000);
+        } catch (error) {
+          info.innerHTML = `<span style="color:#ef4444">✗ ${esc(error.message)}</span>`;
+          btn.disabled = false;
+          btn.textContent = '在线一键更新';
+        }
+      }
       async function checkUpdate() {
         const btn = document.querySelector('[data-check-update]');
         const info = document.getElementById('updateInfo');
@@ -1032,8 +1050,9 @@
               <div style="margin-bottom:8px"><strong style="color:#f59e0b">🎉 发现新版本：${esc(result.version)}</strong></div>
               <div class="muted" style="margin-bottom:12px">发布于：${new Date(result.publishedAt).toLocaleString()}</div>
               <div class="muted" style="margin-bottom:12px;max-height:200px;overflow-y:auto;white-space:pre-wrap">${esc(result.body || result.name)}</div>
-              <a href="${releaseURL}" target="_blank" class="btn primary" style="display:inline-block">前往下载</a>
-            </div>`;
+               <button type="button" class="btn primary" data-apply-update>在线一键更新</button> <a href="${releaseURL}" target="_blank" class="btn" style="display:inline-block">前往下载</a>
+             </div>`;
+             document.querySelector('[data-apply-update]')?.addEventListener('click', applyUpdate);
             badge.innerHTML = '<span class="pill" style="background: #f59e0b">有更新</span>';
           }
         } catch (error) {

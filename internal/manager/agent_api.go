@@ -236,6 +236,9 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		}
 		if !res.OK {
 			n.LastError = res.Message
+			if node.Deleting && res.Message == "unknown task" {
+				n.LastError = "远程 Agent 版本过旧，不支持节点清理任务。请先重新执行上方部署命令更新 Agent，更新后清理任务会自动重试。"
+			}
 		} else if res.Status != nil {
 			n.MitaRunning = res.Status.MitaRunning
 			n.MitaVer = res.Status.MitaVersion

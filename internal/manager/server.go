@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"merit/internal/buildinfo"
@@ -47,6 +48,7 @@ type Server struct {
 	mu       sync.Mutex
 	sessions map[string]time.Time
 	rt       map[string]*nodeRuntime
+	taskSeq  uint64
 }
 
 type nodeRuntime struct {
@@ -141,6 +143,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST "+p+"/api/backup/restore", s.auth(s.handleRestore))
 	s.mux.Handle("POST "+p+"/api/settings/sub-token/rotate", s.auth(s.handleRotateSubToken))
 	s.mux.Handle("GET "+p+"/api/update/check", s.auth(s.handleCheckUpdate))
+	s.mux.Handle("POST "+p+"/api/update/apply", s.auth(s.handleApplyUpdate))
 
 	s.mux.HandleFunc("GET "+p+"/sub", s.handleSubscription)
 	s.mux.HandleFunc("GET "+p+"/install.sh", s.handleInstallScript)
@@ -208,6 +211,10 @@ func (s *Server) nodeRuntime(id string) *nodeRuntime {
 	return r
 }
 
+func (s *Server) nextTaskID(prefix string) string {
+	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), atomic.AddUint64(&s.taskSeq, 1))
+}
+
 func (s *Server) enqueueSync(n *model.Node) {
 	if n.Deleting {
 		// The node is being purged; a stale sync must not replace the purge task.
@@ -218,7 +225,7 @@ func (s *Server) enqueueSync(n *model.Node) {
 	config := n.BuildDesired()
 	encoded, _ := json.Marshal(config)
 	digest := sha256.Sum256(encoded)
-	taskID := fmt.Sprintf("sync-%x-%d", digest[:8], time.Now().UnixNano())
+	taskID := fmt.Sprintf("sync-%x-%s", digest[:8], s.nextTaskID(""))
 	// Full desired-state sync supersedes queued port-specific retries and any
 	// older full sync. Keep only the newest desired state for this node.
 	for id, task := range r.pending {
@@ -276,7 +283,7 @@ func (s *Server) enqueuePortSync(n *model.Node, portID string) error {
 		LoggingLevel: "INFO",
 		Egress:       n.Egress,
 	}
-	taskID := fmt.Sprintf("sync-port-%s-%d", target.ID, time.Now().UnixNano())
+	taskID := fmt.Sprintf("sync-port-%s-%s", target.ID, s.nextTaskID(""))
 	r := s.nodeRuntime(n.ID)
 	r.mu.Lock()
 	// Keep retries for independent ports queued together. A pending full sync

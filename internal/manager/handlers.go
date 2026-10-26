@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"merit/internal/clash"
 	"merit/internal/mieru"
 	"merit/internal/model"
 	"merit/internal/updater"
@@ -844,7 +845,7 @@ func (s *Server) handleNodeClash(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
 		return
 	}
-	yaml := mieru.ClashYAML(mieru.BuildClashEntries(n))
+	yaml := clash.GenerateYAML(clash.BuildEntries(n))
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	_, _ = w.Write([]byte(yaml))
 }
@@ -874,13 +875,13 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid token", http.StatusForbidden)
 		return
 	}
-	var entries []mieru.ClashEntry
+	var entries []clash.Entry
 	for _, n := range s.store.Nodes() {
-		entries = append(entries, mieru.BuildClashEntries(n)...)
+		entries = append(entries, clash.BuildEntries(n)...)
 	}
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	w.Header().Set("Subscription-Userinfo", "upload=0; download=0; total=0; expire=0")
-	_, _ = w.Write([]byte(mieru.ClashYAML(entries)))
+	_, _ = w.Write([]byte(clash.GenerateYAML(entries)))
 }
 
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {

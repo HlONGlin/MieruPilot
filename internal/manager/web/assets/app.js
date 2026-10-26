@@ -402,16 +402,70 @@
             : "尚未同步";
         return `<span class="pill ${statusClass}">${esc(status)}</span><div class="muted" title="${esc(p.instanceError || "上次尝试：" + attempt + "；最近成功：" + synced)}">${esc(p.instanceError || "最近成功：" + synced)}</div>`;
       }
-      function addPort() {
+      async function addPort() {
+        // 获取支持的代理类型
+        let proxyTypes = [];
+        try {
+          proxyTypes = await api("GET", "/api/proxy-types");
+        } catch (e) {
+          proxyTypes = [{type: "mieru", name: "Mieru (默认)", icon: "🚀"}];
+        }
+
+        const typeOptions = proxyTypes.map(t =>
+          `<option value="${esc(t.type)}">${esc(t.icon || '')} ${esc(t.name)}</option>`
+        ).join('');
+
         modal(
-          "生成 mieru 端口",
-          `<div class="field"><label>端口（1025-65535）</label><input name="port" type="number" min="1025" max="65535" placeholder="23456" required autofocus></div><div class="field"><label>协议</label><select name="protocol"><option>TCP</option><option>UDP</option></select></div><div class="field"><label>标签（可选）</label><input name="label" placeholder="例如 香港-1"></div>`,
+          "添加代理端口",
+          `<div class="field"><label>代理类型</label><select name="proxyType" id="proxyTypeSelect">${typeOptions}</select></div>
+          <div class="field"><label>端口（1025-65535）</label><input name="port" type="number" min="1025" max="65535" placeholder="23456" required autofocus></div>
+          <div class="field"><label>协议</label><select name="protocol"><option>TCP</option><option>UDP</option></select></div>
+          <div class="field"><label>标签（可选）</label><input name="label" placeholder="例如 香港-1"></div>
+          <div id="naiveFields" style="display:none">
+            <div class="field"><label>域名</label><input name="domain" placeholder="example.com"></div>
+            <div class="field"><label><input type="checkbox" name="autoACME" checked> 自动申请证书（ACME）</label></div>
+            <div id="manualCertFields" style="display:none">
+              <div class="field"><label>TLS 证书</label><textarea name="tlsCert" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+              <div class="field"><label>TLS 私钥</label><textarea name="tlsKey" rows="4" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></div>
+            </div>
+          </div>
+          <div id="shadowtlsFields" style="display:none">
+            <div class="field"><label>握手服务器</label><input name="handshakeAddr" value="cloudflare.com:443" placeholder="cloudflare.com:443"></div>
+          </div>
+          <script>
+            document.getElementById('proxyTypeSelect').onchange = function() {
+              const type = this.value;
+              document.getElementById('naiveFields').style.display = type === 'naive' ? 'block' : 'none';
+              document.getElementById('shadowtlsFields').style.display = type === 'shadowtls' ? 'block' : 'none';
+            };
+            const autoACMECheckbox = document.querySelector('[name="autoACME"]');
+            if (autoACMECheckbox) {
+              autoACMECheckbox.onchange = function() {
+                document.getElementById('manualCertFields').style.display = this.checked ? 'none' : 'block';
+              };
+            }
+          </script>`,
           async (f) => {
-            await api("POST", "/api/nodes/" + state.node.id + "/ports", {
+            const proxyType = f.get("proxyType");
+            const payload = {
               port: Number(f.get("port")),
               protocol: f.get("protocol"),
               label: f.get("label"),
-            });
+              proxyType: proxyType,
+            };
+
+            if (proxyType === "naive") {
+              payload.domain = f.get("domain");
+              payload.autoACME = f.get("autoACME") === "on";
+              if (!payload.autoACME) {
+                payload.tlsCert = f.get("tlsCert");
+                payload.tlsKey = f.get("tlsKey");
+              }
+            } else if (proxyType === "shadowtls") {
+              payload.handshakeAddr = f.get("handshakeAddr");
+            }
+
+            await api("POST", "/api/nodes/" + state.node.id + "/ports", payload);
             toast("端口已生成并下发");
             renderDetail();
           },
@@ -537,6 +591,9 @@
               case "regenerate":
                 regenerate(id);
                 break;
+              case "uploadCert":
+                uploadCert(id);
+                break;
               case "delete":
                 deletePort(id);
                 break;
@@ -615,6 +672,38 @@
         toast("端口已删除，正在停止实例并清理账号");
         renderDetail();
       }
+      async function uploadCert(id) {
+        const p = (state.node?.ports || []).find((x) => x.id === id);
+        if (!p) return;
+        modal(
+          "上传 TLS 证书",
+          `<div class="field"><label>域名</label><input name="domain" value="${esc(p.domain || '')}" placeholder="example.com" required></div>
+          <div class="field"><label><input type="checkbox" name="autoACME" ${p.autoACME ? 'checked' : ''}> 自动申请证书（ACME）</label></div>
+          <div id="manualCertFields" style="display:${p.autoACME ? 'none' : 'block'}">
+            <div class="field"><label>TLS 证书</label><textarea name="tlsCert" rows="6" placeholder="-----BEGIN CERTIFICATE-----">${esc(p.tlsCert || '')}</textarea></div>
+            <div class="field"><label>TLS 私钥</label><textarea name="tlsKey" rows="6" placeholder="-----BEGIN PRIVATE KEY-----">${esc(p.tlsKey || '')}</textarea></div>
+          </div>
+          <script>
+            document.querySelector('[name="autoACME"]').onchange = function() {
+              document.getElementById('manualCertFields').style.display = this.checked ? 'none' : 'block';
+            };
+          </script>`,
+          async (f) => {
+            const autoACME = f.get("autoACME") === "on";
+            const payload = {
+              domain: f.get("domain"),
+              autoACME: autoACME,
+            };
+            if (!autoACME) {
+              payload.tlsCert = f.get("tlsCert");
+              payload.tlsKey = f.get("tlsKey");
+            }
+            await api("PATCH", "/api/nodes/" + state.node.id + "/ports/" + id, payload);
+            toast("证书配置已更新");
+            renderDetail();
+          },
+        );
+      }
       async function retryPort(id) {
         try {
           await api(
@@ -679,7 +768,10 @@
             location.origin + url("/api/nodes/" + nodeID + "/clash.yaml"),
           detailID = "port-detail-" + p.id;
          const traffic = p.trafficLimit ? `${formatTraffic(p.trafficUsed || 0)} / ${formatTraffic(p.trafficLimit)} (${Math.min(100, Math.round((p.trafficUsed || 0) / p.trafficLimit * 100))}%)` : `已用 ${formatTraffic(p.trafficUsed || 0)} / 不限`;
-         return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span></td><td>${esc(p.label || "—")}</td><td><span class="traffic-cell">${esc(traffic)}${p.autoDisabled ? " · 已超限停用" : ""}</span></td><td>${portStatus(p)}</td><td><div class="port-actions"><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><select class="port-actions-menu" aria-label="端口 ${p.port} 更多操作" data-port-actions="${esc(p.id)}"><option value="">更多操作</option><option value="traffic">流量设置</option><option value="retry" ${p.enabled ? "" : "disabled"}>重试同步</option><option value="regenerate">重置账号</option><option value="delete">删除</option></select></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="6" class="port-detail"><div class="port-detail-title">原生 Mieru 链接</div><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制 Mieru</button>` : ""}</div><div class="port-detail-title" style="margin-top:12px">Clash / mihomo 单节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
+         const proxyType = p.proxyType || 'mieru';
+         const proxyIcon = {mieru: '🚀', naive: '🌐', anytls: '🔐', shadowtls: '🔒'}[proxyType] || '🔧';
+         const proxyName = {mieru: 'Mieru', naive: 'NaïveProxy', anytls: 'AnyTLS', shadowtls: 'ShadowTLS'}[proxyType] || proxyType;
+         return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span> <span class="pill" title="${esc(proxyName)}">${proxyIcon}</span></td><td>${esc(p.label || "—")}</td><td><span class="traffic-cell">${esc(traffic)}${p.autoDisabled ? " · 已超限停用" : ""}</span></td><td>${portStatus(p)}</td><td><div class="port-actions"><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><select class="port-actions-menu" aria-label="端口 ${p.port} 更多操作" data-port-actions="${esc(p.id)}"><option value="">更多操作</option><option value="traffic">流量设置</option><option value="retry" ${p.enabled ? "" : "disabled"}>重试同步</option><option value="regenerate">重置账号</option>${proxyType === 'naive' ? '<option value="uploadCert">上传证书</option>' : ''}<option value="delete">删除</option></select></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="6" class="port-detail"><div class="port-detail-title">${proxyIcon} ${esc(proxyName)} 链接</div><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制链接</button>` : ""}</div>${proxyType === 'naive' ? `<div class="muted" style="margin-top:8px">域名: ${esc(p.domain || '未设置')} · 证书: ${p.autoACME ? '自动(ACME)' : (p.tlsCert ? '已上传' : '未配置')}</div>` : ''}${proxyType === 'shadowtls' ? `<div class="muted" style="margin-top:8px">握手服务器: ${esc(p.handshakeAddr || 'cloudflare.com:443')}</div>` : ''}<div class="port-detail-title" style="margin-top:12px">Clash / mihomo 单节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
       }
       function detailView(n, install, links) {
         n = n && typeof n === "object" ? n : {};

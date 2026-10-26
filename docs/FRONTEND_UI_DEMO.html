@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MieruPilot 多协议支持 UI 演示</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0F172A;
+            color: #F8FAFC;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 32px;
+            margin-bottom: 12px;
+            color: #F8FAFC;
+        }
+
+        .subtitle {
+            color: #94A3B8;
+            margin-bottom: 40px;
+            font-size: 16px;
+        }
+
+        .card {
+            background: #1E293B;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #F8FAFC;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #CBD5E1;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 10px 14px;
+            background: #0F172A;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #F8FAFC;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #38BDF8;
+        }
+
+        .proxy-type-selector {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .proxy-type-option {
+            background: #0F172A;
+            border: 2px solid #334155;
+            border-radius: 8px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .proxy-type-option:hover {
+            border-color: #38BDF8;
+            transform: translateY(-2px);
+        }
+
+        .proxy-type-option.selected {
+            background: #1E40AF;
+            border-color: #38BDF8;
+        }
+
+        .proxy-type-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: #F8FAFC;
+        }
+
+        .proxy-type-desc {
+            font-size: 12px;
+            color: #94A3B8;
+        }
+
+        .conditional-fields {
+            background: #0F172A;
+            border-left: 3px solid #38BDF8;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 16px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #38BDF8;
+            color: #0F172A;
+        }
+
+        .btn-primary:hover {
+            background: #0EA5E9;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: #334155;
+            color: #F8FAFC;
+        }
+
+        .btn-secondary:hover {
+            background: #475569;
+        }
+
+        .port-list {
+            display: grid;
+            gap: 16px;
+        }
+
+        .port-item {
+            background: #0F172A;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .port-info {
+            flex: 1;
+        }
+
+        .port-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .port-number {
+            font-size: 20px;
+            font-weight: 700;
+            color: #38BDF8;
+        }
+
+        .badge {
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-mieru { background: #6366F1; color: white; }
+        .badge-naive { background: #10B981; color: white; }
+        .badge-anytls { background: #F59E0B; color: white; }
+        .badge-shadowtls { background: #8B5CF6; color: white; }
+
+        .port-details {
+            font-size: 13px;
+            color: #94A3B8;
+        }
+
+        .port-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .icon-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            background: transparent;
+            color: #94A3B8;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .icon-btn:hover {
+            background: #334155;
+            color: #F8FAFC;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .feature-card {
+            background: #0F172A;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .feature-icon {
+            width: 40px;
+            height: 40px;
+            background: #1E40AF;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 12px;
+            font-size: 20px;
+        }
+
+        .feature-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #F8FAFC;
+        }
+
+        .feature-desc {
+            font-size: 13px;
+            color: #94A3B8;
+            line-height: 1.6;
+        }
+
+        .code-block {
+            background: #0B0E14;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+            margin-top: 12px;
+        }
+
+        .code-block code {
+            color: #4FD1C5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 MieruPilot 多协议支持</h1>
+        <p class="subtitle">支持 Mieru、NaïveProxy、AnyTLS 和 ShadowTLS v3</p>
+
+        <!-- 添加端口表单 -->
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">添加新端口</h2>
+            </div>
+
+            <div class="proxy-type-selector">
+                <div class="proxy-type-option selected" data-type="mieru">
+                    <div class="proxy-type-name">Mieru</div>
+                    <div class="proxy-type-desc">原生支持</div>
+                </div>
+                <div class="proxy-type-option" data-type="naive">
+                    <div class="proxy-type-name">NaïveProxy</div>
+                    <div class="proxy-type-desc">伪装 HTTP/3</div>
+                </div>
+                <div class="proxy-type-option" data-type="anytls">
+                    <div class="proxy-type-name">AnyTLS</div>
+                    <div class="proxy-type-desc">通用 TLS</div>
+                </div>
+                <div class="proxy-type-option" data-type="shadowtls">
+                    <div class="proxy-type-name">ShadowTLS</div>
+                    <div class="proxy-type-desc">TLS 隧道</div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>端口号</label>
+                <input type="number" placeholder="8080" value="8080">
+            </div>
+
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" placeholder="user123" value="user123">
+            </div>
+
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" placeholder="••••••••" value="password123">
+            </div>
+
+            <!-- NaïveProxy 特定字段 -->
+            <div class="conditional-fields" id="naive-fields" style="display: none;">
+                <div class="form-group">
+                    <label>域名 (Domain)</label>
+                    <input type="text" placeholder="example.com">
+                </div>
+                <div class="form-group">
+                    <label>TLS 证书</label>
+                    <input type="file" accept=".crt,.pem">
+                </div>
+                <div class="form-group">
+                    <label>TLS 私钥</label>
+                    <input type="file" accept=".key,.pem">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox"> 自动 ACME (Let's Encrypt)
+                    </label>
+                </div>
+            </div>
+
+            <!-- ShadowTLS 特定字段 -->
+            <div class="conditional-fields" id="shadowtls-fields" style="display: none;">
+                <div class="form-group">
+                    <label>握手服务器地址</label>
+                    <input type="text" placeholder="cloudflare.com:443" value="cloudflare.com:443">
+                </div>
+                <div class="form-group">
+                    <label>SNI (可选)</label>
+                    <input type="text" placeholder="example.com">
+                </div>
+            </div>
+
+            <button class="btn btn-primary">添加端口</button>
+        </div>
+
+        <!-- 端口列表 -->
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">已配置端口</h2>
+            </div>
+
+            <div class="port-list">
+                <div class="port-item">
+                    <div class="port-info">
+                        <div class="port-header">
+                            <span class="port-number">:8080</span>
+                            <span class="badge badge-mieru">Mieru</span>
+                        </div>
+                        <div class="port-details">
+                            TCP • user123 • 流量: 1.2 GB ↓ 340 MB ↑
+                        </div>
+                    </div>
+                    <div class="port-actions">
+                        <button class="icon-btn" title="复制链接">🔗</button>
+                        <button class="icon-btn" title="编辑">✏️</button>
+                        <button class="icon-btn" title="删除">🗑️</button>
+                    </div>
+                </div>
+
+                <div class="port-item">
+                    <div class="port-info">
+                        <div class="port-header">
+                            <span class="port-number">:443</span>
+                            <span class="badge badge-naive">NaïveProxy</span>
+                        </div>
+                        <div class="port-details">
+                            HTTPS • example.com • user456 • 流量: 5.7 GB ↓ 1.2 GB ↑
+                        </div>
+                    </div>
+                    <div class="port-actions">
+                        <button class="icon-btn" title="复制链接">🔗</button>
+                        <button class="icon-btn" title="上传证书">📄</button>
+                        <button class="icon-btn" title="编辑">✏️</button>
+                        <button class="icon-btn" title="删除">🗑️</button>
+                    </div>
+                </div>
+
+                <div class="port-item">
+                    <div class="port-info">
+                        <div class="port-header">
+                            <span class="port-number">:8443</span>
+                            <span class="badge badge-anytls">AnyTLS</span>
+                        </div>
+                        <div class="port-details">
+                            TLS • 流量: 890 MB ↓ 210 MB ↑
+                        </div>
+                    </div>
+                    <div class="port-actions">
+                        <button class="icon-btn" title="复制链接">🔗</button>
+                        <button class="icon-btn" title="编辑">✏️</button>
+                        <button class="icon-btn" title="删除">🗑️</button>
+                    </div>
+                </div>
+
+                <div class="port-item">
+                    <div class="port-info">
+                        <div class="port-header">
+                            <span class="port-number">:9443</span>
+                            <span class="badge badge-shadowtls">ShadowTLS</span>
+                        </div>
+                        <div class="port-details">
+                            V3 • cloudflare.com:443 • 流量: 2.1 GB ↓ 450 MB ↑
+                        </div>
+                    </div>
+                    <div class="port-actions">
+                        <button class="icon-btn" title="复制链接">🔗</button>
+                        <button class="icon-btn" title="编辑">✏️</button>
+                        <button class="icon-btn" title="删除">🗑️</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 功能特性 -->
+        <div class="card">
+            <h2 class="card-title">新增功能</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🔄</div>
+                    <div class="feature-title">多协议支持</div>
+                    <div class="feature-desc">
+                        同一节点可配置多种代理协议，灵活应对不同网络环境
+                    </div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <div class="feature-title">TLS 证书管理</div>
+                    <div class="feature-desc">
+                        支持手动上传证书或自动 ACME，确保 HTTPS 安全连接
+                    </div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <div class="feature-title">统一流量统计</div>
+                    <div class="feature-desc">
+                        所有协议类型的流量数据统一展示和管理
+                    </div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🔗</div>
+                    <div class="feature-title">分享链接生成</div>
+                    <div class="feature-desc">
+                        自动生成各协议标准格式的分享链接，一键复制
+                    </div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">⚙️</div>
+                    <div class="feature-title">Clash 订阅</div>
+                    <div class="feature-desc">
+                        生成包含所有协议的 Clash 配置，订阅自动更新
+                    </div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🚀</div>
+                    <div class="feature-title">自动安装部署</div>
+                    <div class="feature-desc">
+                        Agent 自动下载和配置各代理程序，无需手动操作
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API 示例 -->
+        <div class="card">
+            <h2 class="card-title">API 示例</h2>
+
+            <h3 style="margin: 20px 0 12px; color: #CBD5E1;">获取支持的代理类型</h3>
+            <div class="code-block">
+                <code>GET /api/proxy-types</code>
+            </div>
+
+            <h3 style="margin: 20px 0 12px; color: #CBD5E1;">添加 NaïveProxy 端口</h3>
+            <div class="code-block">
+<code>POST /api/nodes/:id/ports
+{
+  "port": 443,
+  "protocol": "tcp",
+  "username": "user123",
+  "password": "pass123",
+  "proxyType": "naive",
+  "domain": "example.com",
+  "autoACME": true
+}</code>
+            </div>
+
+            <h3 style="margin: 20px 0 12px; color: #CBD5E1;">上传 TLS 证书</h3>
+            <div class="code-block">
+                <code>POST /api/nodes/:id/ports/:portID/upload-cert
+Content-Type: multipart/form-data</code>
+            </div>
+
+            <h3 style="margin: 20px 0 12px; color: #CBD5E1;">生成 Clash 订阅</h3>
+            <div class="code-block">
+                <code>GET /api/subscription/clash</code>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 代理类型选择器交互
+        document.querySelectorAll('.proxy-type-option').forEach(option => {
+            option.addEventListener('click', () => {
+                // 移除所有选中状态
+                document.querySelectorAll('.proxy-type-option').forEach(o =>
+                    o.classList.remove('selected')
+                );
+                // 添加选中状态
+                option.classList.add('selected');
+
+                // 隐藏所有条件字段
+                document.querySelectorAll('.conditional-fields').forEach(f =>
+                    f.style.display = 'none'
+                );
+
+                // 显示对应的条件字段
+                const type = option.dataset.type;
+                if (type === 'naive') {
+                    document.getElementById('naive-fields').style.display = 'block';
+                } else if (type === 'shadowtls') {
+                    document.getElementById('shadowtls-fields').style.display = 'block';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

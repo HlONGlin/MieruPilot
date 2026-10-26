@@ -10,6 +10,49 @@ import (
 	"merit/internal/proxy/shadowtls"
 )
 
+// Manager provides unified proxy management operations.
+type Manager struct{}
+
+// NewManager creates a new proxy manager.
+func NewManager() *Manager {
+	return &Manager{}
+}
+
+// ShareLinkParams contains parameters for generating share links.
+type ShareLinkParams struct {
+	Host          string
+	Port          int
+	Username      string
+	Password      string
+	Domain        string
+	HandshakeAddr string
+}
+
+// GenerateShareLink generates a share link for the given proxy type.
+func (m *Manager) GenerateShareLink(proxyType string, params ShareLinkParams) string {
+	switch proxyType {
+	case model.ProxyTypeNaive:
+		domain := params.Domain
+		if domain == "" {
+			domain = params.Host
+		}
+		return fmt.Sprintf("naive+https://%s:%s@%s:%d", params.Username, params.Password, domain, params.Port)
+
+	case model.ProxyTypeAnyTLS:
+		return fmt.Sprintf("anytls://%s@%s:%d", params.Password, params.Host, params.Port)
+
+	case model.ProxyTypeShadowTLS:
+		handshake := params.HandshakeAddr
+		if handshake == "" {
+			handshake = "cloudflare.com:443"
+		}
+		return fmt.Sprintf("shadowtls://%s@%s:%d?handshake=%s", params.Password, params.Host, params.Port, handshake)
+
+	default:
+		return ""
+	}
+}
+
 // GetProxyType returns the proxy type for a port, defaulting to mieru for backward compatibility.
 func GetProxyType(p *model.Port) string {
 	if p.ProxyType == "" {

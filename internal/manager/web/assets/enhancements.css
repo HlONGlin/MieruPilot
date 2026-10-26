@@ -1,0 +1,198 @@
+/* 增强功能样式 */
+
+/* 证书信息展示 */
+.cert-info {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.cert-info h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #495057;
+}
+
+.cert-info p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.cert-info .error {
+  color: #dc3545;
+  font-weight: bold;
+}
+
+/* 配置表格 */
+.config-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.config-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.config-table td:first-child {
+  font-weight: 600;
+  color: #6c757d;
+  width: 120px;
+}
+
+.config-table code {
+  background: #f8f9fa;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+}
+
+/* 测试结果 */
+.test-result {
+  padding: 16px;
+}
+
+.test-result h3 {
+  margin: 0 0 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.test-result p {
+  margin: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.test-result .error {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.test-result .error h4 {
+  margin: 0 0 8px 0;
+  color: #856404;
+}
+
+.test-result .error ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+/* 详情折叠 */
+details {
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 8px;
+  margin: 8px 0;
+}
+
+details summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 4px;
+  user-select: none;
+}
+
+details summary:hover {
+  background: #f8f9fa;
+  border-radius: 3px;
+}
+
+details[open] summary {
+  margin-bottom: 8px;
+  border-bottom: 1px solid #dee2e6;
+  padding-bottom: 8px;
+}
+
+/* 宽模态框 */
+.modal.wide .modal-content {
+  max-width: 800px;
+  width: 90%;
+}
+
+/* 小提示文本 */
+small.muted {
+  display: block;
+  margin-top: 4px;
+  color: #6c757d;
+  font-size: 12px;
+}
+
+/* 按钮组 */
+.btn-group {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.btn-group .btn {
+  flex: 1;
+}
+
+/* 状态图标 */
+.status-icon {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.status-icon.online {
+  background: #28a745;
+  box-shadow: 0 0 4px #28a745;
+}
+
+.status-icon.offline {
+  background: #dc3545;
+}
+
+.status-icon.warning {
+  background: #ffc107;
+}
+
+/* Toast 颜色 */
+.toast.success {
+  background: #d4edda;
+  border-color: #c3e6cb;
+  color: #155724;
+}
+
+.toast.error {
+  background: #f8d7da;
+  border-color: #f5c6cb;
+  color: #721c24;
+}
+
+.toast.warning {
+  background: #fff3cd;
+  border-color: #ffeaa7;
+  color: #856404;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .config-table td:first-child {
+    width: 80px;
+    font-size: 12px;
+  }
+
+  .btn-group {
+    flex-direction: column;
+  }
+
+  .modal.wide .modal-content {
+    width: 95%;
+  }
+}

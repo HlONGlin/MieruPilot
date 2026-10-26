@@ -1,0 +1,832 @@
+/* ============================================
+   MieruPilot 增强功能样式
+   ============================================ */
+
+/* ============================================
+   1. 证书信息卡片
+   ============================================ */
+
+.cert-info-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  margin-top: 16px;
+}
+
+.cert-info-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #f3f4f6;
+}
+
+.cert-info-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.cert-info-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.info-row label {
+  min-width: 80px;
+  font-weight: 500;
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.info-row .config-value {
+  color: #111827;
+}
+
+/* 域名显示 */
+.domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.domain-chip {
+  display: inline-block;
+  padding: 4px 12px;
+  background: #eff6ff;
+  color: #1e40af;
+  border-radius: 16px;
+  font-size: 13px;
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+}
+
+/* 有效期显示 */
+.validity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.validity .date {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  color: #374151;
+}
+
+/* 剩余天数 */
+.days-remaining {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.days-remaining.normal {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.days-remaining.warning {
+  background: #fed7aa;
+  color: #92400e;
+}
+
+.days-remaining.critical {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.days-remaining .number {
+  font-size: 20px;
+}
+
+.days-remaining .unit {
+  font-size: 14px;
+}
+
+/* ============================================
+   2. 测试结果卡片
+   ============================================ */
+
+.test-results-card {
+  background: #ffffff;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 24px;
+  margin-top: 16px;
+}
+
+.test-results-card.test-success {
+  border-color: #10b981;
+}
+
+.test-results-card.test-warning {
+  border-color: #f59e0b;
+}
+
+.test-results-card.test-error {
+  border-color: #ef4444;
+}
+
+.test-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid #f3f4f6;
+}
+
+.test-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 20px;
+  font-weight: bold;
+}
+
+.test-success .status-icon {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.test-warning .status-icon {
+  background: #fed7aa;
+  color: #92400e;
+}
+
+.test-error .status-icon {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.test-time {
+  font-size: 13px;
+  color: #6b7280;
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+}
+
+.test-summary {
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: #f9fafb;
+  border-radius: 6px;
+  color: #374151;
+  line-height: 1.6;
+}
+
+/* 测试项目列表 */
+.test-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.test-item {
+  padding: 12px 16px;
+  border-radius: 6px;
+  border-left: 4px solid #d1d5db;
+  background: #f9fafb;
+}
+
+.test-item.success {
+  border-left-color: #10b981;
+  background: #f0fdf4;
+}
+
+.test-item.warning {
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.test-item.error {
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+
+.test-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.test-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  color: #111827;
+}
+
+.test-latency {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  color: #6b7280;
+  padding: 2px 8px;
+  background: #ffffff;
+  border-radius: 4px;
+}
+
+.test-message {
+  font-size: 14px;
+  color: #6b7280;
+  margin-left: 28px;
+}
+
+/* 警告和错误列表 */
+.test-warnings,
+.test-errors {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 6px;
+}
+
+.test-warnings {
+  background: #fffbeb;
+  border: 1px solid #fbbf24;
+}
+
+.test-errors {
+  background: #fef2f2;
+  border: 1px solid #f87171;
+}
+
+.test-warnings h4,
+.test-errors h4 {
+  margin: 0 0 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.test-warnings ul,
+.test-errors ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.test-warnings li,
+.test-errors li {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+/* 测试操作按钮 */
+.test-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* ============================================
+   3. 配置查看
+   ============================================ */
+
+.config-view {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.config-section {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.config-section h3 {
+  margin: 0 0 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #f3f4f6;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+
+.config-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-item label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.config-value {
+  color: #111827;
+  font-size: 14px;
+}
+
+.config-value.mono {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  background: #f9fafb;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* 端口配置卡片 */
+.port-config-card {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.port-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.port-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.proxy-type-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.proxy-type-badge.mieru {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.proxy-type-badge.naive {
+  background: #fce7f3;
+  color: #9f1239;
+}
+
+.proxy-type-badge.anytls {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.proxy-type-badge.shadowtls {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
+.port-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* TLS 配置 */
+.tls-config {
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.tls-config h5 {
+  margin: 0 0 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.cert-info-compact {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f9fafb;
+  border-radius: 4px;
+}
+
+.cert-info-compact .domains {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  color: #374151;
+}
+
+.cert-info-compact .expiry {
+  font-size: 12px;
+  font-weight: 500;
+  color: #059669;
+}
+
+.cert-info-compact .expiry.warning {
+  color: #d97706;
+}
+
+/* 用户配置 */
+.users-config {
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.users-config h5 {
+  margin: 0 0 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.user-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: #f9fafb;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.user-item .username {
+  font-weight: 500;
+  color: #111827;
+}
+
+.user-item .password {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* 出站配置 */
+.egress-proxies,
+.egress-rules {
+  margin-top: 12px;
+}
+
+.egress-proxies h4,
+.egress-rules h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.egress-proxy-card,
+.egress-rule-card {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.proxy-header,
+.rule-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.proxy-name,
+.rule-name {
+  font-weight: 500;
+  color: #111827;
+}
+
+.proxy-status,
+.rule-action {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.proxy-status.enabled {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.proxy-status.disabled {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.rule-action.direct {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.rule-action.proxy {
+  background: #fce7f3;
+  color: #9f1239;
+}
+
+.rule-action.block {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.proxy-details {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* 配置操作按钮 */
+.config-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* ============================================
+   4. 通用组件
+   ============================================ */
+
+/* 按钮 */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.btn-primary {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background: #2563eb;
+}
+
+.btn-secondary {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.btn-secondary:hover {
+  background: #e5e7eb;
+}
+
+.btn-warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.btn-warning:hover {
+  background: #fde68a;
+}
+
+/* 模态框 */
+.modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  background: #ffffff;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal.large .modal-content {
+  max-width: 900px;
+}
+
+.modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.close-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  font-size: 24px;
+  color: #6b7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* 表单 */
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: #374151;
+  font-size: 14px;
+}
+
+.form-group input[type="file"],
+.form-group textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.form-group textarea {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  resize: vertical;
+}
+
+.form-group input[type="file"]:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.form-text {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.form-divider {
+  text-align: center;
+  margin: 16px 0;
+  color: #9ca3af;
+  font-size: 13px;
+  position: relative;
+}
+
+.form-divider::before,
+.form-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 40%;
+  height: 1px;
+  background: #e5e7eb;
+}
+
+.form-divider::before {
+  left: 0;
+}
+
+.form-divider::after {
+  right: 0;
+}
+
+/* 验证结果 */
+.validation-result {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.validation-result.success {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #065f46;
+}
+
+.validation-result.error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+
+/* 状态标签 */
+.status-running {
+  color: #059669;
+}
+
+.status-stopped {
+  color: #6b7280;
+}
+
+.status-error {
+  color: #dc2626;
+}
+
+/* 工具类 */
+.mono {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+}
+
+/* 图标 */
+[class^="icon-"] {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+}

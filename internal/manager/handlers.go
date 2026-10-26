@@ -1,6 +1,10 @@
 package manager
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"os"
@@ -613,8 +617,9 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 // handleUploadCert 处理TLS证书上传（用于NaïveProxy）
 func (s *Server) handleUploadCert(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Cert string `json:"cert"`
-		Key  string `json:"key"`
+		Cert     string `json:"cert"`
+		Key      string `json:"key"`
+		AutoACME bool   `json:"autoACME"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求无效"})
@@ -624,19 +629,37 @@ func (s *Server) handleUploadCert(w http.ResponseWriter, r *http.Request) {
 	req.Cert = strings.TrimSpace(req.Cert)
 	req.Key = strings.TrimSpace(req.Key)
 
-	if req.Cert == "" || req.Key == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "证书和密钥不能为空"})
-		return
+	// 如果启用ACME，清空手动证书
+	if req.AutoACME {
+		req.Cert = ""
+		req.Key = ""
+	} else {
+		// 手动上传证书，需要验证
+		if req.Cert == "" || req.Key == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "证书和密钥不能为空"})
+			return
+		}
+
+		// 验证证书格式
+		if !strings.Contains(req.Cert, "BEGIN CERTIFICATE") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "证书格式无效，必须包含 BEGIN CERTIFICATE"})
+			return
+		}
+		if !strings.Contains(req.Key, "BEGIN") || !strings.Contains(req.Key, "PRIVATE KEY") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "私钥格式无效，必须包含 PRIVATE KEY"})
+			return
+		}
+
+		// 尝试解析证书以验证有效性
+		if err := validateCertAndKey(req.Cert, req.Key); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("证书验证失败: %v", err)})
+			return
+		}
 	}
 
-	// 简单验证证书格式
-	if !strings.Contains(req.Cert, "BEGIN CERTIFICATE") {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "证书格式无效"})
-		return
-	}
-	if !strings.Contains(req.Key, "BEGIN") || !strings.Contains(req.Key, "PRIVATE KEY") {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "私钥格式无效"})
-		return
+	var certInfo *CertInfo
+	if req.Cert != "" {
+		certInfo = extractCertInfo(req.Cert)
 	}
 
 	n, err := s.store.Update(r.PathValue("id"), func(n *model.Node) error {
@@ -645,12 +668,12 @@ func (s *Server) handleUploadCert(w http.ResponseWriter, r *http.Request) {
 			return errNodeNotFound
 		}
 		if p.ProxyType != model.ProxyTypeNaive {
-			return fmt.Errorf("只有 NaïveProxy 类型的端口才能上传证书")
+			return fmt.Errorf("只有 NaïveProxy 类型的端口才能配置证书")
 		}
 
 		p.TLSCert = req.Cert
 		p.TLSKey = req.Key
-		p.AutoACME = false // 上传证书后禁用自动ACME
+		p.AutoACME = req.AutoACME
 
 		return nil
 	})
@@ -660,7 +683,17 @@ func (s *Server) handleUploadCert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.enqueueSync(n)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "证书上传成功"})
+
+	response := map[string]any{
+		"ok":       true,
+		"message":  "证书配置已更新",
+		"autoACME": req.AutoACME,
+	}
+	if certInfo != nil {
+		response["certInfo"] = certInfo
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 // handleGetProxyTypes 返回支持的代理类型列表
@@ -1045,4 +1078,185 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"updated": true, "version": release.TagName, "message": "更新完成，Manager 将自动重启"})
+}
+
+// handleGetCertInfo 获取端口的证书信息
+func (s *Server) handleGetCertInfo(w http.ResponseWriter, r *http.Request) {
+	n := s.store.Node(r.PathValue("id"))
+	if n == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
+		return
+	}
+
+	port := n.FindPort(r.PathValue("pid"))
+	if port == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "端口不存在"})
+		return
+	}
+
+	if port.ProxyType != model.ProxyTypeNaive {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "只有 NaïveProxy 端口支持证书"})
+		return
+	}
+
+	response := map[string]any{
+		"autoACME": port.AutoACME,
+		"hasCert":  port.TLSCert != "",
+		"domain":   port.Domain,
+	}
+
+	if port.TLSCert != "" {
+		certInfo := extractCertInfo(port.TLSCert)
+		if certInfo != nil {
+			response["certInfo"] = certInfo
+
+			// 添加证书健康状态
+			if certInfo.DaysToExpire < 0 {
+				response["certStatus"] = "expired"
+				response["certStatusText"] = "已过期"
+			} else if certInfo.DaysToExpire < 7 {
+				response["certStatus"] = "expiring"
+				response["certStatusText"] = fmt.Sprintf("即将过期（%d天后）", certInfo.DaysToExpire)
+			} else {
+				response["certStatus"] = "valid"
+				response["certStatusText"] = fmt.Sprintf("有效（%d天后过期）", certInfo.DaysToExpire)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// handleTestNode 测试节点连通性
+func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
+	n := s.store.Node(r.PathValue("id"))
+	if n == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	result := s.TestNode(ctx, n)
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleTestPort 测试特定端口
+func (s *Server) handleTestPort(w http.ResponseWriter, r *http.Request) {
+	n := s.store.Node(r.PathValue("id"))
+	if n == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
+		return
+	}
+
+	port := n.FindPort(r.PathValue("pid"))
+	if port == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "端口不存在"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	result := s.TestPort(ctx, n, port)
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleGetNodeConfig 获取节点详细配置
+func (s *Server) handleGetNodeConfig(w http.ResponseWriter, r *http.Request) {
+	n := s.store.Node(r.PathValue("id"))
+	if n == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
+		return
+	}
+
+	config := s.GetNodeConfig(n)
+	writeJSON(w, http.StatusOK, config)
+}
+
+// --- Certificate helpers ----------------------------------------------------
+
+// CertInfo 证书信息
+type CertInfo struct {
+	Subject      string    `json:"subject"`
+	Issuer       string    `json:"issuer"`
+	NotBefore    time.Time `json:"notBefore"`
+	NotAfter     time.Time `json:"notAfter"`
+	DaysToExpire int       `json:"daysToExpire"`
+	DNSNames     []string  `json:"dnsNames,omitempty"`
+}
+
+// validateCertAndKey 验证证书和密钥的有效性
+func validateCertAndKey(certPEM, keyPEM string) error {
+	// 解析证书
+	certBlock, _ := pem.Decode([]byte(certPEM))
+	if certBlock == nil {
+		return fmt.Errorf("无法解析证书PEM格式")
+	}
+
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return fmt.Errorf("无法解析证书: %v", err)
+	}
+
+	// 检查证书有效期
+	now := time.Now()
+	if now.Before(cert.NotBefore) {
+		return fmt.Errorf("证书尚未生效（生效时间: %s）", cert.NotBefore.Format("2006-01-02"))
+	}
+	if now.After(cert.NotAfter) {
+		return fmt.Errorf("证书已过期（过期时间: %s）", cert.NotAfter.Format("2006-01-02"))
+	}
+
+	// 解析私钥
+	keyBlock, _ := pem.Decode([]byte(keyPEM))
+	if keyBlock == nil {
+		return fmt.Errorf("无法解析私钥PEM格式")
+	}
+
+	// 尝试解析不同类型的私钥（验证格式）
+	switch keyBlock.Type {
+	case "RSA PRIVATE KEY":
+		_, err = x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	case "EC PRIVATE KEY":
+		_, err = x509.ParseECPrivateKey(keyBlock.Bytes)
+	default:
+		_, err = x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	}
+	if err != nil {
+		return fmt.Errorf("无法解析私钥: %v", err)
+	}
+
+	// 验证证书和私钥匹配
+	_, err = tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		return fmt.Errorf("证书和私钥不匹配: %v", err)
+	}
+
+	return nil
+}
+
+// extractCertInfo 提取证书信息
+func extractCertInfo(certPEM string) *CertInfo {
+	certBlock, _ := pem.Decode([]byte(certPEM))
+	if certBlock == nil {
+		return nil
+	}
+
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return nil
+	}
+
+	info := &CertInfo{
+		Subject:      cert.Subject.CommonName,
+		Issuer:       cert.Issuer.CommonName,
+		NotBefore:    cert.NotBefore,
+		NotAfter:     cert.NotAfter,
+		DaysToExpire: int(time.Until(cert.NotAfter).Hours() / 24),
+		DNSNames:     cert.DNSNames,
+	}
+
+	return info
 }

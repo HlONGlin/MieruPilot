@@ -1,4 +1,32 @@
+# 数据文件
 /data/
+*.json
+!go.mod
+!go.sum
+!package.json
+
+# 构建产物
+dist/
 *.exe
-!dist/*.exe
+*.out
+*.test
+
+# 日志
 *.log
+
+# 开发环境
+merit-dev.json
+*.swp
+*.swo
+*~
+.DS_Store
+.vscode/
+.idea/
+
+# 测试覆盖率
+coverage.out
+coverage.html
+
+# 临时文件
+tmp/
+temp/

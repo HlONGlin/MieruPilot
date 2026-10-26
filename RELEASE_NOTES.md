@@ -62,7 +62,7 @@
 ### 一键安装
 
 ```bash
-bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
+bash <(curl -fsSL https://github.com/HlONGlin/UnifiedProxy/raw/main/one-click.sh)
 ```
 
 ### 手动安装
@@ -77,7 +77,7 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 
 ## 📖 文档
 
-完整文档请查看 [README.md](https://github.com/HlONGlin/MieruPilot#readme)
+完整文档请查看 [README.md](https://github.com/HlONGlin/UnifiedProxy#readme)
 
 ## ⚠️ 注意事项
 
@@ -104,8 +104,8 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 ## 💬 反馈与支持
 
 遇到问题或有建议？欢迎：
-- 提交 [Issue](https://github.com/HlONGlin/MieruPilot/issues)
-- 发起 [Discussion](https://github.com/HlONGlin/MieruPilot/discussions)
+- 提交 [Issue](https://github.com/HlONGlin/UnifiedProxy/issues)
+- 发起 [Discussion](https://github.com/HlONGlin/UnifiedProxy/discussions)
 
 ---
 

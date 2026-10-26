@@ -18,7 +18,7 @@ import (
 
 const (
 	// GitHubRepo is the repository for checking updates.
-	GitHubRepo = "HlONGlin/MieruPilot"
+	GitHubRepo = "HlONGlin/UnifiedProxy"
 	// CheckInterval is how often to check for updates.
 	CheckInterval = 24 * time.Hour
 )

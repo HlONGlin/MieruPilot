@@ -7,7 +7,7 @@
 **A:** 使用一键安装脚本最简单：
 
 ```bash
-bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
+bash <(curl -fsSL https://github.com/HlONGlin/UnifiedProxy/raw/main/one-click.sh)
 ```
 
 或者下载对应平台的二进制文件手动运行。
@@ -371,4 +371,4 @@ MieruPilot 依赖 mieru，但不修改其核心功能。
 
 ---
 
-没找到答案？[提交 Issue](https://github.com/HlONGlin/MieruPilot/issues/new) 或在 [Discussions](https://github.com/HlONGlin/MieruPilot/discussions) 中提问。
+没找到答案？[提交 Issue](https://github.com/HlONGlin/UnifiedProxy/issues/new) 或在 [Discussions](https://github.com/HlONGlin/UnifiedProxy/discussions) 中提问。

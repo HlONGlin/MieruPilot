@@ -13,7 +13,7 @@
 ### 克隆仓库
 
 ```bash
-git clone https://github.com/HlONGlin/MieruPilot.git
+git clone https://github.com/HlONGlin/UnifiedProxy.git
 cd MieruPilot
 ```
 
@@ -197,8 +197,8 @@ git push origin feature/your-feature-name
 ## 获取帮助
 
 - 查看 [README.md](README.md)
-- 在 [GitHub Discussions](https://github.com/HlONGlin/MieruPilot/discussions) 中提问
-- 查看现有的 [Issues](https://github.com/HlONGlin/MieruPilot/issues)
+- 在 [GitHub Discussions](https://github.com/HlONGlin/UnifiedProxy/discussions) 中提问
+- 查看现有的 [Issues](https://github.com/HlONGlin/UnifiedProxy/issues)
 
 ---
 

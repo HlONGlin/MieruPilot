@@ -538,7 +538,7 @@ systemctl status merit-anytls-8443
 4. 发起 Pull Request
 
 ### 联系方式
-- 项目地址: https://github.com/HlONGlin/MieruPilot
+- 项目地址: https://github.com/HlONGlin/UnifiedProxy
 - 文档站点: docs/ 目录
 
 ---

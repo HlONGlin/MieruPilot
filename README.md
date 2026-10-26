@@ -1,11 +1,12 @@
 <div align="center">
 
-# 🚀 MieruPilot
+# 🚀 UnifiedProxy
 
-**一键生成并管理 mieru 节点的集中控制平台**
+**统一的多协议代理管理平台 - 一键部署和管理多种代理协议**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](go.mod)
+[![Release](https://img.shields.io/github/v/release/HlONGlin/UnifiedProxy)](https://github.com/HlONGlin/UnifiedProxy/releases)
 
 [特性](#-特性) • [快速开始](#-快速开始) • [架构](#-架构) • [使用指南](#-使用指南) • [开发](#-开发)
 
@@ -34,15 +35,20 @@
 
 ## 🎯 概述
 
-**MieruPilot** 是一个集中式的 mieru 节点管理平台，采用 **Manager + Agent** 架构设计。一台控制机统一管理所有节点服务器，让你专注于使用，而不是繁琐的配置。
+**UnifiedProxy**（原 MieruPilot）是一个统一的多协议代理管理平台，采用 **Manager + Agent** 架构设计。一台控制机统一管理所有节点服务器，支持部署和管理多种主流代理协议。
 
-参考 [Zelay](https://github.com/enp6/Zelay) 的设计思路，但目标不是转发，而是**一键生成和管理 mieru 节点**。
+### 支持的协议
+
+- ✅ **Mieru/Mita** - 高性能的轻量级代理协议
+- ✅ **NaïveProxy** - 基于 Chromium 网络栈的高伪装代理
+- ✅ **AnyTLS** - 通用 TLS 代理协议
+- ✅ **ShadowTLS v3** - 将流量伪装成 TLS 的代理协议
 
 ### 核心理念
 
-- **一个端口号** → 自动生成用户名、密码、分享链接、Clash 订阅
-- **一条命令** → Agent 自动安装、配置、启停 `mita` 服务
-- **一个面板** → 集中控制所有主机，告别逐台 SSH
+- **一个端口号** → 选择协议类型，自动生成配置、分享链接、Clash 订阅
+- **一条命令** → Agent 自动安装、配置、启停对应代理服务
+- **一个面板** → 集中控制所有主机的所有协议，告别逐台 SSH
 
 ---
 
@@ -133,7 +139,7 @@
 使用一键脚本完成 Manager 的安装与管理：
 
 ```bash
-bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
+bash <(curl -fsSL https://github.com/HlONGlin/UnifiedProxy/raw/main/one-click.sh)
 ```
 
 **脚本功能：**
@@ -160,7 +166,7 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
    ```
 4. 打开管理地址，使用刚设置的账号登录
 
-> 如需固定版本，可在运行脚本前设置 `MERIT_RELEASE_BASE`，例如 `MERIT_RELEASE_BASE=https://github.com/HlONGlin/MieruPilot/releases/download/v1.1.0`。
+> 如需固定版本，可在运行脚本前设置 `MERIT_RELEASE_BASE`，例如 `MERIT_RELEASE_BASE=https://github.com/HlONGlin/UnifiedProxy/releases/download/v1.1.0`。
 
 ### 📦 手动安装
 
@@ -168,7 +174,7 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 
 #### 1. 下载二进制文件
 
-前往 [Releases](https://github.com/HlONGlin/MieruPilot/releases/latest) 下载对应平台的二进制文件。
+前往 [Releases](https://github.com/HlONGlin/UnifiedProxy/releases/latest) 下载对应平台的二进制文件。
 
 #### 2. 启动 Manager
 
@@ -473,7 +479,7 @@ Agent 定期上报每个端口的流量使用情况，Manager 汇总并持久化
 
 ```bash
 # 使用一键脚本
-bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
+bash <(curl -fsSL https://github.com/HlONGlin/UnifiedProxy/raw/main/one-click.sh)
 # 选择「1. 安装或更新 Manager」
 ```
 

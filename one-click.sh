@@ -3,8 +3,8 @@
 set -u
 
 # 默认下载最新 Release；可用 MERIT_RELEASE_BASE 固定版本，例如：
-# MERIT_RELEASE_BASE="https://github.com/HlONGlin/MieruPilot/releases/download/v1.1.0"
-RELEASE_BASE="${MERIT_RELEASE_BASE:-https://github.com/HlONGlin/MieruPilot/releases/latest/download}"
+# MERIT_RELEASE_BASE="https://github.com/HlONGlin/UnifiedProxy/releases/download/v1.3.0"
+RELEASE_BASE="${MERIT_RELEASE_BASE:-https://github.com/HlONGlin/UnifiedProxy/releases/latest/download}"
 INSTALL_DIR="/opt/merit"
 DATA_DIR="/var/lib/merit"
 SERVICE_FILE="/etc/systemd/system/merit-manager.service"

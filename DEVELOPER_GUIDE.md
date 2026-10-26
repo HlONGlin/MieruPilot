@@ -12,7 +12,7 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/HlONGlin/MieruPilot.git
+git clone https://github.com/HlONGlin/UnifiedProxy.git
 cd MieruPilot
 
 # 构建

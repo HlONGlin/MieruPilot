@@ -239,6 +239,21 @@
           enabled = (n.ports || []).filter((p) => p.enabled).length;
         return `<article class="node-card" data-node="${esc(n.id)}"><div class="node-top"><div class="node-icon">${esc((n.name || "N")[0].toUpperCase())}</div><div class="node-title"><strong>${esc(n.name)}</strong><small>${esc(n.address || n.seenIP || "等待 Agent 上线")}</small></div><span class="state ${cl}">${st}</span></div><div class="node-meta"><div>架构：${esc(n.arch || "—")}　系统：${esc(n.os || "—")}</div><div>端口：${enabled} 个启用　·　最后在线：${ago(n.lastSeen)}</div>${n.lastError ? `<div style="color:var(--red)">${esc(n.lastError)}</div>` : ""}</div></article>`;
       }
+      function healthPanel(n) {
+        const online = n.registered && n.online;
+        const enabled = arrayOf(n.ports).filter((p) => p.enabled);
+        const failed = enabled.filter((p) => !p.instanceRunning || p.instanceError);
+        const rows = [
+          { label: "Agent 心跳", ok: online, detail: online ? `最近上报 ${ago(n.lastSeen)}` : n.registered ? `已离线 · 最后上报 ${ago(n.lastSeen)}` : "Agent 尚未注册" },
+          { label: "mita 服务", ok: online && n.mitaRunning, detail: !online ? "等待 Agent 在线" : n.mitaRunning ? `运行中 · ${n.mitaVer || "版本未知"}` : n.lastError || "服务未运行" },
+          { label: "代理入口", ok: online && enabled.length > 0 && failed.length === 0, detail: !online ? "等待 Agent 上线后检查" : enabled.length === 0 ? "没有启用的入口" : failed.length ? `${failed.length} / ${enabled.length} 个入口异常` : `${enabled.length} 个启用入口均正常` },
+        ];
+        const overall = rows.every((row) => row.ok);
+        return `<section class="panel health-panel"><div class="panel-head"><h3>健康检查</h3><span class="pill ${overall ? "on" : "off"}">${overall ? "全部正常" : "需要关注"}</span></div><div class="health-list">${rows.map((row) => `<div class="health-row"><span class="health-indicator ${row.ok ? "ok" : "issue"}" aria-hidden="true"></span><strong>${row.label}</strong><span class="muted">${esc(row.detail)}</span></div>`).join("")}${n.lastError && online ? `<p class="health-error">${esc(n.lastError)}</p>` : ""}</div></section>`;
+      }
+      function auditTable(entries) {
+        return entries.length ? `<div class="table-wrap"><table class="audit-table"><thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>目标</th></tr></thead><tbody>${entries.map((entry) => `<tr><td>${esc(new Date(entry.time).toLocaleString())}</td><td>${esc(entry.actor)}</td><td>${esc(entry.action)}</td><td>${esc(entry.target || "—")}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty audit-empty">暂无操作记录</div>';
+      }
       function modal(title, body, onSubmit) {
         modalEl.innerHTML = `<div class="modal-back" data-modal-backdrop><form class="modal" id="modalForm"><h3>${title}</h3>${body}<div class="modal-foot"><button type="button" class="btn" data-modal-cancel>取消</button><button type="submit" class="btn primary">确认</button></div></form></div>`;
         const backdrop = modalEl.querySelector("[data-modal-backdrop]");
@@ -405,10 +420,11 @@
       async function renderSettings() {
         shell("系统设置", '<div class="empty">加载中…</div>');
         try {
-          const s = await api("GET", "/api/settings");
+          const [s, audit] = await Promise.all([api("GET", "/api/settings"), api("GET", "/api/audit?limit=100")]);
           state.settings = s;
           document.querySelector(".content").innerHTML =
             `<div class="page-head"><div><h2>系统设置</h2><p>管理订阅地址与系统信息</p></div></div><div class="panel"><div class="panel-head"><h3>公开订阅地址</h3><span class="pill">Token 保护</span></div><p class="muted">将此地址填入 Clash Verge、mihomo 等客户端，即可订阅全部已启用节点。</p><div class="command"><code>${esc(s.subscriptionURL)}</code><button class="btn" data-copy="${esc(s.subscriptionURL)}">复制地址</button><button class="btn danger" data-rotate>重置令牌</button></div></div><div class="panel"><div class="panel-head"><h3>使用流程</h3></div><ol class="muted"><li>添加节点，复制部署命令到目标服务器。</li><li>节点上线后生成端口，等待 Agent 同步配置。</li><li>复制 mierus 链接，或使用上方订阅地址导入客户端。</li></ol></div><div class="panel"><div class="panel-head"><h3>系统信息</h3><span id="updateBadge"></span></div><div class="muted">Manager 版本：${esc(s.version || "—")}<br>数据文件：服务端本地 JSON 文件</div><div class="toolbar" style="margin-top:12px"><button class="btn" data-check-update>检查更新</button></div><div id="updateInfo" class="muted" style="margin-top:12px"></div></div>`;
+          document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="panel"><div class="panel-head"><div><h3>操作记录</h3><span class="muted">最近 100 条管理操作</span></div></div>${auditTable(arrayOf(audit))}</section>`);
           document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="panel"><h3>备份与恢复</h3><p class="muted">备份包含节点账号、出站凭据与订阅令牌，请妥善保存。恢复会替换节点配置，保留当前管理员与管理地址，并自动同步节点。</p><div class="toolbar"><a class="btn" href="${url('/api/backup')}">导出备份</a><label class="btn">选择备份文件<input id="backupFile" type="file" accept=".json,application/json" hidden></label></div><p id="backupResult" class="muted"></p></section>`);
           document.getElementById('backupFile').onchange = async event => {
             const file = event.target.files[0];
@@ -506,18 +522,27 @@
         document
           .querySelectorAll("[data-toggle-port]")
           .forEach((x) => (x.onclick = () => togglePort(x.dataset.togglePort)));
-        document
-          .querySelectorAll("[data-regenerate]")
-          .forEach((x) => (x.onclick = () => regenerate(x.dataset.regenerate)));
-        document
-          .querySelectorAll("[data-delete-port]")
-          .forEach((x) => (x.onclick = () => deletePort(x.dataset.deletePort)));
-        document
-          .querySelectorAll("[data-retry-port]")
-          .forEach((x) => (x.onclick = () => retryPort(x.dataset.retryPort)));
-        document
-          .querySelectorAll("[data-traffic-port]")
-          .forEach((x) => (x.onclick = () => manageTraffic(x.dataset.trafficPort)));
+        document.querySelectorAll("[data-port-actions]").forEach((x) => {
+          x.onchange = () => {
+            const id = x.dataset.portActions;
+            const action = x.value;
+            x.value = "";
+            switch (action) {
+              case "traffic":
+                manageTraffic(id);
+                break;
+              case "retry":
+                retryPort(id);
+                break;
+              case "regenerate":
+                regenerate(id);
+                break;
+              case "delete":
+                deletePort(id);
+                break;
+            }
+          };
+        });
       }
       function editNode() {
         const n = state.node;
@@ -654,7 +679,7 @@
             location.origin + url("/api/nodes/" + nodeID + "/clash.yaml"),
           detailID = "port-detail-" + p.id;
          const traffic = p.trafficLimit ? `${formatTraffic(p.trafficUsed || 0)} / ${formatTraffic(p.trafficLimit)} (${Math.min(100, Math.round((p.trafficUsed || 0) / p.trafficLimit * 100))}%)` : `已用 ${formatTraffic(p.trafficUsed || 0)} / 不限`;
-         return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span></td><td>${esc(p.label || "—")}</td><td><code>${esc(p.username)}</code></td><td><span class="traffic-cell">${esc(traffic)}${p.autoDisabled ? " · 已超限停用" : ""}</span></td><td>${portStatus(p)}</td><td><div class="toolbar"><button type="button" class="btn small" data-traffic-port="${esc(p.id)}">流量设置</button>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制 Mieru</button>` : ""}<button type="button" class="btn small" data-retry-port="${esc(p.id)}" ${p.enabled ? "" : "disabled"}>重试同步</button><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><button type="button" class="btn small" data-regenerate="${p.id}">重置账号</button><button type="button" class="btn small danger" data-delete-port="${p.id}">删除</button></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="7" class="port-detail"><div class="port-detail-title">原生 Mieru 链接</div><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制 Mieru</button>` : ""}</div><div class="port-detail-title" style="margin-top:12px">Clash / mihomo 单节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
+         return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span></td><td>${esc(p.label || "—")}</td><td><span class="traffic-cell">${esc(traffic)}${p.autoDisabled ? " · 已超限停用" : ""}</span></td><td>${portStatus(p)}</td><td><div class="port-actions"><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><select class="port-actions-menu" aria-label="端口 ${p.port} 更多操作" data-port-actions="${esc(p.id)}"><option value="">更多操作</option><option value="traffic">流量设置</option><option value="retry" ${p.enabled ? "" : "disabled"}>重试同步</option><option value="regenerate">重置账号</option><option value="delete">删除</option></select></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="6" class="port-detail"><div class="port-detail-title">原生 Mieru 链接</div><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制 Mieru</button>` : ""}</div><div class="port-detail-title" style="margin-top:12px">Clash / mihomo 单节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
       }
       function detailView(n, install, links) {
         n = n && typeof n === "object" ? n : {};
@@ -671,9 +696,9 @@
           notice = n.deleting
            ? `<div class="panel" style="border-color:var(--red)"><p style="margin:0">正在清理远程 Agent、所有 mita 端口与账号，清理完成后节点会自动从面板移除。若目标机已离线且无法恢复，可强制移除记录。</p>${n.lastError ? `<p class="muted" style="margin:8px 0 0;color:var(--red)">${esc(n.lastError)}</p>` : ""}${String(n.lastError || "").includes("版本过旧") ? `<p style="margin:12px 0 0">请复制上方最新部署命令，在目标机重新执行。Agent 更新后会自动继续清理。</p>` : ""}</div>`
             : "";
-        return `<button type="button" class="back" data-back>← 返回节点总览</button><div class="page-head"><div><h2>${esc(n.name)} <span class="state ${cl}">${st}</span></h2><p>${esc(n.address || n.seenIP || "等待 Agent 上线")} · 最后在线 ${ago(n.lastSeen)}</p></div><div class="toolbar">${actions}</div></div>${notice}<div class="panel"><div class="panel-head"><h3>① 部署 Agent</h3><span class="muted">在目标服务器以 root 执行</span></div><div class="command"><code>${esc(install.command || "部署命令暂不可用")}</code><button type="button" class="btn" data-copy="${esc(install.command || "")}">复制命令</button></div><div class="form-row" style="margin-top:16px"><div class="field"><label>公网 IP / 地址</label><input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || "自动探测")}"></div><div class="field"><label>域名（可选）</label><input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div><button type="button" class="btn primary" data-save-node>保存节点信息</button></div><p class="muted" style="font-size:12px;margin:12px 0 0">系统：${esc(n.os || "—")} · 架构：${esc(n.arch || "—")} · mita：${esc(n.mitaVer || "—")} · Agent：${esc(n.agentVer || "—")}</p></div><div class="panel"><div class="panel-head"><h3>② 端口与账号</h3><span class="muted">点击“展开”查看该端口的 Mieru 和 Clash 操作</span><button type="button" class="btn primary" data-add-port>＋ 生成端口</button></div>${
+        return `<button type="button" class="back" data-back>← 返回节点总览</button><div class="page-head"><div><h2>${esc(n.name)} <span class="state ${cl}">${st}</span></h2><p>${esc(n.address || n.seenIP || "等待 Agent 上线")} · 最后在线 ${ago(n.lastSeen)}</p></div><div class="toolbar">${actions}</div></div>${notice}${healthPanel(n)}<div class="panel"><div class="panel-head"><h3>① 部署 Agent</h3><span class="muted">在目标服务器以 root 执行</span></div><div class="command"><code>${esc(install.command || "部署命令暂不可用")}</code><button type="button" class="btn" data-copy="${esc(install.command || "")}">复制命令</button></div><div class="form-row" style="margin-top:16px"><div class="field"><label>公网 IP / 地址</label><input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || "自动探测")}"></div><div class="field"><label>域名（可选）</label><input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div><button type="button" class="btn primary" data-save-node>保存节点信息</button></div><p class="muted" style="font-size:12px;margin:12px 0 0">系统：${esc(n.os || "—")} · 架构：${esc(n.arch || "—")} · mita：${esc(n.mitaVer || "—")} · Agent：${esc(n.agentVer || "—")}</p></div><div class="panel"><div class="panel-head"><h3>② 代理入口</h3><span class="muted">展开可复制 Mieru 链接或导出 Clash 配置</span><button type="button" class="btn primary" data-add-port>＋ 生成端口</button></div>${
           ports.length
-             ? `<div class="table-wrap"><table><thead><tr><th>端口</th><th>协议</th><th>标签</th><th>账号</th><th>流量</th><th>状态</th><th>操作</th></tr></thead><tbody>${arrayOf(
+             ? `<div class="table-wrap"><table class="port-table"><thead><tr><th>端口</th><th>协议</th><th>标签</th><th>流量</th><th>状态</th><th>操作</th></tr></thead><tbody>${arrayOf(
                 ports,
               )
                 .map((p) => portRow(p, map[p?.id], n.id))

@@ -43,7 +43,10 @@ type persisted struct {
 	Settings *Settings                         `json:"settings"`
 	Nodes    []*model.Node                     `json:"nodes"`
 	Tasks    map[string]map[string]*model.Task `json:"tasks,omitempty"`
+	Audit    []model.AuditEntry                `json:"audit,omitempty"`
 }
+
+const maxAuditEntries = 500
 
 // Store is a concurrency safe JSON backed data store.
 type Store struct {
@@ -331,6 +334,32 @@ func (s *Store) Delete(id string) error {
 	}
 	delete(s.index, id)
 	return nil
+}
+
+// AddAudit appends an administrative audit entry and retains the newest entries.
+func (s *Store) AddAudit(entry model.AuditEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.data.Audit
+	s.data.Audit = append([]model.AuditEntry{entry}, previous...)
+	if len(s.data.Audit) > maxAuditEntries {
+		s.data.Audit = s.data.Audit[:maxAuditEntries]
+	}
+	if err := s.saveLocked(); err != nil {
+		s.data.Audit = previous
+		return err
+	}
+	return nil
+}
+
+// Audit returns the newest administrative changes first.
+func (s *Store) Audit(limit int) []model.AuditEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || limit > len(s.data.Audit) {
+		limit = len(s.data.Audit)
+	}
+	return append([]model.AuditEntry(nil), s.data.Audit[:limit]...)
 }
 
 func cloneNode(node *model.Node) *model.Node {

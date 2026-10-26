@@ -168,6 +168,7 @@ type DesiredConfig struct {
 	PortBindings  []PortBinding        `json:"portBindings"`
 	Users         []UserCred           `json:"users"`
 	PortIDs       []string             `json:"portIds,omitempty"`
+	Ports         []*Port              `json:"ports,omitempty"` // 完整Port信息用于多代理支持
 	DisabledPorts []PortInstanceTarget `json:"disabledPorts,omitempty"`
 	LoggingLevel  string               `json:"loggingLevel"`
 	Egress        *EgressConfig        `json:"egress,omitempty"`
@@ -189,6 +190,7 @@ func (n *Node) BuildDesired() *DesiredConfig {
 		cfg.PortBindings = append(cfg.PortBindings, PortBinding{Port: p.Port, Protocol: p.Protocol})
 		cfg.Users = append(cfg.Users, UserCred{Name: p.Username, Password: p.Password})
 		cfg.PortIDs = append(cfg.PortIDs, p.ID)
+		cfg.Ports = append(cfg.Ports, p) // 添加完整Port信息
 	}
 	cfg.Enable = len(cfg.PortBindings) > 0
 	return cfg

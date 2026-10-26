@@ -106,6 +106,7 @@ func (s *Store) Restore(raw []byte) error {
 		return err
 	}
 	data.Admin = previous.Admin
+	data.Audit = previous.Audit
 	if data.Settings == nil {
 		data.Settings = &Settings{}
 	}

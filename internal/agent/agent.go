@@ -299,16 +299,123 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 	if cfg == nil {
 		return "", nil, fmt.Errorf("缺少配置")
 	}
-	if !a.mitaInstalled() {
-		if _, err := a.ensureMita(); err != nil {
-			return "", nil, fmt.Errorf("mita 未安装且自动安装失败: %w", err)
+
+	// 分离不同代理类型的端口
+	mieruBindings := []model.PortBinding{}
+	mieruUsers := []model.UserCred{}
+	mieruPortIDs := []string{}
+	otherPorts := []*model.Port{}
+
+	// 使用完整Port信息来判断代理类型
+	for i, port := range cfg.Ports {
+		proxyType := port.ProxyType
+		if proxyType == "" {
+			proxyType = model.ProxyTypeMieru
+		}
+
+		if proxyType == model.ProxyTypeMieru {
+			// Mieru端口使用原有逻辑
+			if i < len(cfg.PortBindings) {
+				mieruBindings = append(mieruBindings, cfg.PortBindings[i])
+			}
+			if i < len(cfg.Users) {
+				mieruUsers = append(mieruUsers, cfg.Users[i])
+			}
+			if i < len(cfg.PortIDs) {
+				mieruPortIDs = append(mieruPortIDs, cfg.PortIDs[i])
+			}
+		} else {
+			// 其他代理类型
+			otherPorts = append(otherPorts, port)
 		}
 	}
-	results, err := a.applyPortInstances(cfg)
-	if err != nil {
-		return "", results, err
+
+	var allResults []model.PortInstanceResult
+
+	// 处理mieru端口（现有逻辑）
+	if len(mieruBindings) > 0 {
+		if !a.mitaInstalled() {
+			if _, instErr := a.ensureMita(); instErr != nil {
+				return "", nil, fmt.Errorf("mita 未安装且自动安装失败: %w", instErr)
+			}
+		}
+
+		mieruCfg := *cfg
+		mieruCfg.PortBindings = mieruBindings
+		mieruCfg.Users = mieruUsers
+		mieruCfg.PortIDs = mieruPortIDs
+
+		results, err := a.applyPortInstances(&mieruCfg)
+		if err != nil {
+			return "", results, err
+		}
+		allResults = append(allResults, results...)
 	}
-	return fmt.Sprintf("已应用 %d 个独立 mita 实例", len(cfg.PortBindings)), results, nil
+
+	// 处理其他代理类型
+	for _, port := range otherPorts {
+		result := model.PortInstanceResult{
+			PortID:    port.ID,
+			Port:      port.Port,
+			CheckedAt: time.Now(),
+		}
+
+		// 确保代理已安装
+		if err := a.ensureProxyInstalled(port); err != nil {
+			result.Error = fmt.Sprintf("安装代理失败: %v", err)
+			result.OK = false
+			allResults = append(allResults, result)
+			continue
+		}
+
+		// 启动代理实例
+		if err := a.startProxyInstance(port); err != nil {
+			result.Error = fmt.Sprintf("启动代理失败: %v", err)
+			result.OK = false
+			allResults = append(allResults, result)
+			continue
+		}
+
+		// 检查运行状态
+		running := a.isProxyInstanceRunning(port)
+		result.Running = running
+		result.OK = running
+		if !running {
+			result.Error = "代理启动后未处于运行状态"
+		}
+
+		allResults = append(allResults, result)
+	}
+
+	msg := fmt.Sprintf("已应用 %d 个代理实例（%d mieru，%d 其他）",
+		len(cfg.Ports), len(mieruBindings), len(otherPorts))
+
+	return msg, allResults, nil
+}
+
+// ensureProxyInstalled 确保指定代理类型已安装
+func (a *Agent) ensureProxyInstalled(port *model.Port) error {
+	proxyType := port.ProxyType
+	if proxyType == "" {
+		proxyType = model.ProxyTypeMieru
+	}
+
+	switch proxyType {
+	case model.ProxyTypeMieru:
+		_, err := a.ensureMita()
+		return err
+	case model.ProxyTypeNaive:
+		_, err := a.ensureNaive()
+		return err
+	case model.ProxyTypeAnyTLS:
+		_, err := a.ensureAnyTLS()
+		return err
+	case model.ProxyTypeShadowTLS:
+		_, err := a.ensureShadowTLS()
+		return err
+	default:
+		return fmt.Errorf("不支持的代理类型: %s", proxyType)
+	}
 }
 
 // applyPortInstances runs one mita process per enabled port. This is required

@@ -444,9 +444,15 @@ func (s *Server) deleteNodeRecord(w http.ResponseWriter, id string) {
 
 func (s *Server) handleAddPort(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Port     int    `json:"port"`
-		Protocol string `json:"protocol"`
-		Label    string `json:"label"`
+		Port          int    `json:"port"`
+		Protocol      string `json:"protocol"`
+		ProxyType     string `json:"proxyType"`
+		Label         string `json:"label"`
+		Domain        string `json:"domain"`
+		AutoACME      bool   `json:"autoACME"`
+		TLSCert       string `json:"tlsCert"`
+		TLSKey        string `json:"tlsKey"`
+		HandshakeAddr string `json:"handshakeAddr"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求无效"})
@@ -460,16 +466,50 @@ func (s *Server) handleAddPort(w http.ResponseWriter, r *http.Request) {
 	if proto != model.ProtocolUDP {
 		proto = model.ProtocolTCP
 	}
+
+	// 默认代理类型为 mieru
+	proxyType := strings.TrimSpace(req.ProxyType)
+	if proxyType == "" {
+		proxyType = model.ProxyTypeMieru
+	}
+
+	// 验证代理类型
+	validTypes := map[string]bool{
+		model.ProxyTypeMieru:     true,
+		model.ProxyTypeNaive:     true,
+		model.ProxyTypeAnyTLS:    true,
+		model.ProxyTypeShadowTLS: true,
+	}
+	if !validTypes[proxyType] {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "不支持的代理类型"})
+		return
+	}
+
 	var added *model.Port
 	n, err := s.store.Update(r.PathValue("id"), func(n *model.Node) error {
 		for _, p := range n.Ports {
-			// Each per-port mita service owns a single numeric port and config
-			// file. Reusing the number with another transport would collide.
 			if p.Port == req.Port {
 				return errConflict
 			}
 		}
-		p := mieru.NewPort(req.Port, proto, strings.TrimSpace(req.Label))
+
+		p := mieru.NewPortWithType(req.Port, proto, strings.TrimSpace(req.Label), proxyType)
+
+		// 设置代理特定配置
+		if proxyType == model.ProxyTypeNaive {
+			p.Domain = strings.TrimSpace(req.Domain)
+			p.AutoACME = req.AutoACME
+			if !req.AutoACME {
+				p.TLSCert = strings.TrimSpace(req.TLSCert)
+				p.TLSKey = strings.TrimSpace(req.TLSKey)
+			}
+		} else if proxyType == model.ProxyTypeShadowTLS {
+			p.HandshakeAddr = strings.TrimSpace(req.HandshakeAddr)
+			if p.HandshakeAddr == "" {
+				p.HandshakeAddr = "cloudflare.com:443"
+			}
+		}
+
 		n.Ports = append(n.Ports, p)
 		added = p
 		return nil
@@ -500,6 +540,10 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 		TrafficLimit   *int64  `json:"trafficLimit"`
 		BandwidthLimit *int64  `json:"bandwidthLimit"`
 		ResetTraffic   bool    `json:"resetTraffic"`
+		// 新增字段用于更新代理配置
+		Domain        *string `json:"domain"`
+		AutoACME      *bool   `json:"autoACME"`
+		HandshakeAddr *string `json:"handshakeAddr"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求无效"})
@@ -543,6 +587,18 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 			p.Enabled = false
 			p.AutoDisabled = true
 		}
+
+		// 更新代理特定配置
+		if req.Domain != nil {
+			p.Domain = strings.TrimSpace(*req.Domain)
+		}
+		if req.AutoACME != nil {
+			p.AutoACME = *req.AutoACME
+		}
+		if req.HandshakeAddr != nil {
+			p.HandshakeAddr = strings.TrimSpace(*req.HandshakeAddr)
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -551,6 +607,90 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 	}
 	s.enqueueSync(n)
 	writeJSON(w, http.StatusOK, toDTO(n))
+}
+
+// handleUploadCert 处理TLS证书上传（用于NaïveProxy）
+func (s *Server) handleUploadCert(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cert string `json:"cert"`
+		Key  string `json:"key"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求无效"})
+		return
+	}
+
+	req.Cert = strings.TrimSpace(req.Cert)
+	req.Key = strings.TrimSpace(req.Key)
+
+	if req.Cert == "" || req.Key == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "证书和密钥不能为空"})
+		return
+	}
+
+	// 简单验证证书格式
+	if !strings.Contains(req.Cert, "BEGIN CERTIFICATE") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "证书格式无效"})
+		return
+	}
+	if !strings.Contains(req.Key, "BEGIN") || !strings.Contains(req.Key, "PRIVATE KEY") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "私钥格式无效"})
+		return
+	}
+
+	n, err := s.store.Update(r.PathValue("id"), func(n *model.Node) error {
+		p := n.FindPort(r.PathValue("pid"))
+		if p == nil {
+			return errNodeNotFound
+		}
+		if p.ProxyType != model.ProxyTypeNaive {
+			return fmt.Errorf("只有 NaïveProxy 类型的端口才能上传证书")
+		}
+
+		p.TLSCert = req.Cert
+		p.TLSKey = req.Key
+		p.AutoACME = false // 上传证书后禁用自动ACME
+
+		return nil
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	s.enqueueSync(n)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "证书上传成功"})
+}
+
+// handleGetProxyTypes 返回支持的代理类型列表
+func (s *Server) handleGetProxyTypes(w http.ResponseWriter, r *http.Request) {
+	types := []map[string]any{
+		{
+			"type":        model.ProxyTypeMieru,
+			"name":        "Mieru (默认)",
+			"description": "mieru 自定义协议，支持TCP/UDP",
+			"icon":        "🚀",
+		},
+		{
+			"type":        model.ProxyTypeNaive,
+			"name":        "NaïveProxy",
+			"description": "基于Chrome网络栈的TLS代理，需要域名和证书",
+			"icon":        "🌐",
+		},
+		{
+			"type":        model.ProxyTypeAnyTLS,
+			"name":        "AnyTLS",
+			"description": "轻量级TLS混淆代理",
+			"icon":        "🔐",
+		},
+		{
+			"type":        model.ProxyTypeShadowTLS,
+			"name":        "ShadowTLS v3",
+			"description": "TLS流量伪装代理，需要握手服务器",
+			"icon":        "🔒",
+		},
+	}
+	writeJSON(w, http.StatusOK, types)
 }
 
 func maxInt64(a, b int64) int64 {
@@ -627,11 +767,12 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type link struct {
-		ID       string `json:"id"`
-		Label    string `json:"label"`
-		Port     int    `json:"port"`
-		Protocol string `json:"protocol"`
-		Link     string `json:"link"`
+		ID        string `json:"id"`
+		Label     string `json:"label"`
+		Port      int    `json:"port"`
+		Protocol  string `json:"protocol"`
+		ProxyType string `json:"proxyType"`
+		Link      string `json:"link"`
 	}
 	out := []link{}
 	host := mieru.ClientHost(n)
@@ -639,15 +780,62 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 		if !p.Enabled || host == "" {
 			continue
 		}
+
+		proxyType := p.ProxyType
+		if proxyType == "" {
+			proxyType = model.ProxyTypeMieru
+		}
+
+		var shareLink string
+		if proxyType == model.ProxyTypeMieru {
+			shareLink = mieru.SimpleLink(n, p)
+		} else {
+			// 使用proxy包生成其他类型的分享链接
+			shareLink = s.generateProxyLink(n, p)
+		}
+
 		out = append(out, link{
-			ID:       p.ID,
-			Label:    p.Label,
-			Port:     p.Port,
-			Protocol: p.Protocol,
-			Link:     mieru.SimpleLink(n, p),
+			ID:        p.ID,
+			Label:     p.Label,
+			Port:      p.Port,
+			Protocol:  p.Protocol,
+			ProxyType: proxyType,
+			Link:      shareLink,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// generateProxyLink 为不同代理类型生成分享链接
+func (s *Server) generateProxyLink(n *model.Node, p *model.Port) string {
+	proxyType := p.ProxyType
+	if proxyType == "" {
+		proxyType = model.ProxyTypeMieru
+	}
+
+	switch proxyType {
+	case model.ProxyTypeNaive:
+		domain := p.Domain
+		if domain == "" {
+			domain = mieru.ClientHost(n)
+		}
+		return fmt.Sprintf("naive+https://%s:%s@%s:%d", p.Username, p.Password, domain, p.Port)
+
+	case model.ProxyTypeAnyTLS:
+		host := mieru.ClientHost(n)
+		return fmt.Sprintf("anytls://%s@%s:%d", p.Password, host, p.Port)
+
+	case model.ProxyTypeShadowTLS:
+		host := mieru.ClientHost(n)
+		handshake := p.HandshakeAddr
+		if handshake == "" {
+			handshake = "cloudflare.com:443"
+		}
+		return fmt.Sprintf("shadowtls://%s@%s:%d?handshake=%s", p.Password, host, p.Port, handshake)
+
+	default:
+		return mieru.SimpleLink(n, p)
+	}
 }
 
 func (s *Server) handleNodeClash(w http.ResponseWriter, r *http.Request) {

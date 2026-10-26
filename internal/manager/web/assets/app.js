@@ -43,7 +43,7 @@
         document.documentElement.classList.toggle("theme-light", !dark);
       }
       function logo() {
-        return '<span class="logo-mark">M</span>';
+        return '<span class="logo-mark">U</span>';
       }
       function url(path) {
         return base + path;
@@ -130,7 +130,7 @@
             : ["离线", ""];
       }
       function renderLogin() {
-        app.innerHTML = `<main class="auth"><form class="auth-card" id="login"><div class="brand">${logo()}<span>merit<i>.</i></span></div><h1>登录控制台</h1><p>管理你的 mieru 节点和端口配置</p><div class="field"><label>管理员账号</label><input name="username" autocomplete="username" required autofocus></div><div class="field"><label>管理员密码</label><input name="password" type="password" autocomplete="current-password" required></div><div class="error" id="loginError"></div><button class="btn primary full" type="submit">登录控制台</button></form></main>`;
+        app.innerHTML = `<main class="auth"><form class="auth-card" id="login"><div class="brand">${logo()}<span>unified<i>.</i></span></div><h1>登录控制台</h1><p>管理你的多协议代理节点和端口配置</p><div class="field"><label>管理员账号</label><input name="username" autocomplete="username" required autofocus></div><div class="field"><label>管理员密码</label><input name="password" type="password" autocomplete="current-password" required></div><div class="error" id="loginError"></div><button class="btn primary full" type="submit">登录控制台</button></form></main>`;
         document.getElementById("login").onsubmit = async (e) => {
           e.preventDefault();
           const f = new FormData(e.target);
@@ -147,7 +147,7 @@
         };
       }
       function shell(title, content) {
-        app.innerHTML = `<div class="layout"><aside class="sidebar"><div class="brand">${logo()}<span>merit<i>.</i></span></div><nav class="nav"><button type="button" class="${state.view === "nodes" ? "active" : ""}" data-nav="nodes">${icon.grid}<span>节点总览</span></button><button type="button" class="${state.view === "settings" ? "active" : ""}" data-nav="settings">${icon.settings}<span>系统设置</span></button></nav><div class="sidebar-bottom"><button type="button" data-logout>${icon.logout} <span>退出登录</span></button></div></aside><section class="main"><header class="topbar"><h1>${title}</h1><div class="top-actions"><span class="status-dot"></span><span class="muted">系统在线</span><button type="button" class="btn small" id="themeToggle">☼ / ☾</button><button type="button" class="btn small" data-refresh>刷新</button></div></header><main class="content">${content}</main></section></div>`;
+        app.innerHTML = `<div class="layout"><aside class="sidebar"><div class="brand">${logo()}<span>unified<i>.</i></span></div><nav class="nav"><button type="button" class="${state.view === "nodes" ? "active" : ""}" data-nav="nodes">${icon.grid}<span>节点总览</span></button><button type="button" class="${state.view === "settings" ? "active" : ""}" data-nav="settings">${icon.settings}<span>系统设置</span></button></nav><div class="sidebar-bottom"><button type="button" data-logout>${icon.logout} <span>退出登录</span></button></div></aside><section class="main"><header class="topbar"><h1>${title}</h1><div class="top-actions"><span class="status-dot"></span><span class="muted">系统在线</span><button type="button" class="btn small" id="themeToggle">☼ / ☾</button><button type="button" class="btn small" data-refresh>刷新</button></div></header><main class="content">${content}</main></section></div>`;
       }
       function render() {
         if (!state.me.authenticated) return renderLogin();

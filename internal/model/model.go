@@ -10,6 +10,14 @@ const (
 	ProtocolUDP = "UDP"
 )
 
+// Proxy types supported by the system.
+const (
+	ProxyTypeMieru      = "mieru"
+	ProxyTypeNaive      = "naive"
+	ProxyTypeAnyTLS     = "anytls"
+	ProxyTypeShadowTLS  = "shadowtls"
+)
+
 // Defaults applied when generating a mieru client profile.
 const (
 	DefaultProfile        = "default"
@@ -26,6 +34,7 @@ type Port struct {
 	ID               string    `json:"id"`
 	Port             int       `json:"port"`
 	Protocol         string    `json:"protocol"`
+	ProxyType        string    `json:"proxyType,omitempty"` // mieru, naive, anytls, shadowtls; defaults to mieru
 	Username         string    `json:"username"`
 	Password         string    `json:"password"`
 	Label            string    `json:"label"`
@@ -43,6 +52,13 @@ type Port struct {
 	BandwidthLimit int64     `json:"bandwidthLimit,omitempty"` // Speed limit in bytes/sec, 0 = unlimited
 	TrafficRaw     int64     `json:"trafficRaw,omitempty"`     // Last raw mita metric counter
 	AutoDisabled   bool      `json:"autoDisabled,omitempty"`   // Disabled automatically after exceeding the limit
+
+	// Proxy-specific configuration
+	TLSCert      string `json:"tlsCert,omitempty"`      // TLS certificate (for naive proxy)
+	TLSKey       string `json:"tlsKey,omitempty"`       // TLS private key (for naive proxy)
+	Domain       string `json:"domain,omitempty"`       // Domain name for ACME or SNI
+	HandshakeAddr string `json:"handshakeAddr,omitempty"` // Handshake server for ShadowTLS
+	AutoACME     bool   `json:"autoACME,omitempty"`     // Enable automatic ACME certificate
 }
 
 // Node represents one managed host running the merit agent and mita.
@@ -134,6 +150,15 @@ type EgressRule struct {
 type EgressConfig struct {
 	Proxies []EgressProxy `json:"proxies,omitempty"`
 	Rules   []EgressRule  `json:"rules,omitempty"`
+}
+
+// AuditEntry records a successful administrative change without request data.
+type AuditEntry struct {
+	Time   time.Time `json:"time"`
+	Actor  string    `json:"actor"`
+	Action string    `json:"action"`
+	Target string    `json:"target,omitempty"`
+	Detail string    `json:"detail,omitempty"`
 }
 
 // DesiredConfig is the full desired mita server configuration for a node.

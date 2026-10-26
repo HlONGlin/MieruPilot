@@ -57,12 +57,20 @@ func NewPort(port int, protocol, label string) *model.Port {
 		ID:        RandomID(),
 		Port:      port,
 		Protocol:  strings.ToUpper(protocol),
+		ProxyType: model.ProxyTypeMieru, // Default to mieru for backward compatibility
 		Username:  GenerateUsername(),
 		Password:  GeneratePassword(),
 		Label:     label,
 		Enabled:   true,
 		CreatedAt: time.Now(),
 	}
+}
+
+// NewPortWithType builds a port with specified proxy type.
+func NewPortWithType(port int, protocol, label, proxyType string) *model.Port {
+	p := NewPort(port, protocol, label)
+	p.ProxyType = proxyType
+	return p
 }
 
 // ServerConfigJSON renders the mita server configuration file.
@@ -191,6 +199,14 @@ func SimpleLink(n *model.Node, p *model.Port) string {
 		u.Fragment = name
 	}
 	return u.String()
+}
+
+// GetProxyType returns the proxy type for backward compatibility.
+func GetProxyType(p *model.Port) string {
+	if p.ProxyType == "" {
+		return model.ProxyTypeMieru
+	}
+	return p.ProxyType
 }
 
 // StandardLink builds a mieru:// standard sharing link by embedding the client

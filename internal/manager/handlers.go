@@ -1033,7 +1033,7 @@ func validToken(s string) bool {
 func (s *Server) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	release, err := updater.CheckUpdate(s.version)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "检查更新失败：" + updateErrorHint(err)})
 		return
 	}
 	if release == nil {
@@ -1057,7 +1057,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 	defer s.requestMu.Unlock()
 	release, err := updater.CheckUpdate(s.version)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "检查更新失败：" + updateErrorHint(err)})
 		return
 	}
 	if release == nil {
@@ -1070,7 +1070,7 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := updater.DownloadAndVerify(release, "manager", executable); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "下载或校验更新失败：" + err.Error()})
 		return
 	}
 	if err := updater.ScheduleRestart(); err != nil {
@@ -1078,6 +1078,19 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"updated": true, "version": release.TagName, "message": "更新完成，Manager 将自动重启"})
+}
+
+// updateErrorHint keeps network failures understandable without leaking an
+// upstream HTML error page into the settings panel.
+func updateErrorHint(err error) string {
+	msg := err.Error()
+	if strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "Client.Timeout") {
+		return "连接 GitHub 超时，请检查服务器网络或代理后重试"
+	}
+	if strings.Contains(msg, "no such host") || strings.Contains(msg, "connection refused") || strings.Contains(msg, "i/o timeout") {
+		return "无法连接 GitHub，请检查服务器 DNS、网络或代理设置"
+	}
+	return msg
 }
 
 // handleGetCertInfo 获取端口的证书信息

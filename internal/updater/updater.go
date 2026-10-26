@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,7 +22,20 @@ const (
 	GitHubRepo = "HlONGlin/UnifiedProxy"
 	// CheckInterval is how often to check for updates.
 	CheckInterval = 24 * time.Hour
+	// releaseCacheTTL keeps the settings page usable when GitHub is temporarily
+	// unavailable or slow behind a proxy.
+	releaseCacheTTL      = 10 * time.Minute
+	githubRequestTimeout = 5 * time.Second
 )
+
+var releaseAPIURL = fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", GitHubRepo)
+var releaseRequestTimeout = githubRequestTimeout
+
+var releaseCache struct {
+	sync.Mutex
+	release   *Release
+	fetchedAt time.Time
+}
 
 // Release represents a GitHub release.
 type Release struct {
@@ -56,10 +70,22 @@ func CheckUpdate(currentVersion string) (*Release, error) {
 
 // LatestRelease returns the latest stable GitHub release.
 func LatestRelease() (*Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", GitHubRepo)
+	releaseCache.Lock()
+	if releaseCache.release != nil && time.Since(releaseCache.fetchedAt) < releaseCacheTTL {
+		release := *releaseCache.release
+		releaseCache.Unlock()
+		return &release, nil
+	}
+	releaseCache.Unlock()
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	client := &http.Client{Timeout: releaseRequestTimeout}
+	req, err := http.NewRequest(http.MethodGet, releaseAPIURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check update: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "UnifiedProxy-Updater")
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check update: %w", err)
 	}
@@ -74,15 +100,55 @@ func LatestRelease() (*Release, error) {
 		return nil, fmt.Errorf("failed to parse release: %w", err)
 	}
 
+	releaseCache.Lock()
+	releaseCache.release = &release
+	releaseCache.fetchedAt = time.Now()
+	releaseCache.Unlock()
+
 	return &release, nil
+}
+
+func resetReleaseCache() {
+	releaseCache.Lock()
+	releaseCache.release = nil
+	releaseCache.fetchedAt = time.Time{}
+	releaseCache.Unlock()
 }
 
 // isNewer checks if newVer is newer than current.
 // Simple comparison - assumes semantic versioning like v1.0.0
 func isNewer(newVer, current string) bool {
-	newVer = strings.TrimPrefix(newVer, "v")
-	current = strings.TrimPrefix(current, "v")
-	return newVer > current
+	newParts, okNew := versionParts(newVer)
+	currentParts, okCurrent := versionParts(current)
+	if !okNew || !okCurrent {
+		return false
+	}
+	for i := 0; i < len(newParts); i++ {
+		if newParts[i] != currentParts[i] {
+			return newParts[i] > currentParts[i]
+		}
+	}
+	return false
+}
+
+func versionParts(version string) ([3]int, bool) {
+	var parts [3]int
+	version = strings.TrimSpace(strings.TrimPrefix(version, "v"))
+	fields := strings.SplitN(version, ".", 4)
+	if len(fields) < 3 {
+		return parts, false
+	}
+	for i := 0; i < 3; i++ {
+		value := 0
+		for _, c := range fields[i] {
+			if c < '0' || c > '9' {
+				return parts, false
+			}
+			value = value*10 + int(c-'0')
+		}
+		parts[i] = value
+	}
+	return parts, true
 }
 
 // FindAsset finds the appropriate binary asset for the current platform.

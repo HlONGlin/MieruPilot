@@ -71,14 +71,32 @@
         }
         const r = await fetch(url(path), opt);
         const ct = r.headers.get("content-type") || "";
-        const data = ct.includes("json") ? await r.json() : await r.text();
+        let data;
+        let invalidResponse = false;
+        if (ct.includes("json")) {
+          try {
+            data = await r.json();
+          } catch (_) {
+            invalidResponse = true;
+            data = { error: "服务器返回了无效的 JSON 响应，请稍后重试" };
+          }
+        } else {
+          const text = await r.text();
+          const looksLikeHTML = /<\s*!doctype\s+html|<\s*html[\s>]|<\s*head[\s>]/i.test(text);
+          invalidResponse = looksLikeHTML;
+          data = {
+            error: looksLikeHTML
+              ? `服务器或上游服务暂时不可用（HTTP ${r.status}），请稍后重试`
+              : (text.slice(0, 300) || `请求失败（HTTP ${r.status}）`),
+          };
+        }
         if (r.status === 401) {
           state.me.authenticated = false;
           render();
           throw Error("登录已失效");
         }
-        if (!r.ok) {
-          const e = Error(data?.error || data || `请求失败 (${r.status})`);
+        if (!r.ok || invalidResponse) {
+          const e = Error(data?.error || `请求失败 (${r.status})`);
           e.status = r.status;
           throw e;
         }
@@ -1162,7 +1180,7 @@
             info.innerHTML = '<span style="color: #22c55e">✓ 已是最新版本</span>';
             badge.innerHTML = '<span class="pill" style="background: #22c55e">最新</span>';
           } else {
-            const releaseURL = `https://github.com/HlONGlin/MieruPilot/releases/tag/${esc(result.version)}`;
+            const releaseURL = `https://github.com/HlONGlin/UnifiedProxy/releases/tag/${encodeURIComponent(result.version)}`;
             info.innerHTML = `<div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-top:8px">
               <div style="margin-bottom:8px"><strong style="color:#f59e0b">🎉 发现新版本：${esc(result.version)}</strong></div>
               <div class="muted" style="margin-bottom:12px">发布于：${new Date(result.publishedAt).toLocaleString()}</div>

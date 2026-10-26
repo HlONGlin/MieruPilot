@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -91,7 +92,11 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 	managerRestarted := !runtime.initialized
 	runtime.initialized = true
 	runtime.mu.Unlock()
-	if firstRegister || managerRestarted || newAgentInstance {
+	if n.Deleting {
+		// Keep the teardown request alive if it was lost, and never replace it
+		// with a regular config sync.
+		s.ensurePurge(n)
+	} else if firstRegister || managerRestarted || newAgentInstance {
 		s.enqueueSync(n)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -116,6 +121,10 @@ func (s *Server) handleAgentPoll(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
+	if node.Deleting {
+		// Make sure a reconnect or a lost SetTasks cannot strand the teardown.
+		s.ensurePurge(node)
+	}
 	tasks := s.pollTasks(node.ID, wait)
 	if tasks == nil {
 		tasks = []*model.Task{}
@@ -154,6 +163,25 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(rt.pending, res.TaskID)
 		rt.mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	if task := rt.pending[res.TaskID]; task != nil && task.Kind == model.TaskPurge && res.OK {
+		// The host is clean, so the panel record and its queued tasks can go.
+		delete(rt.pending, res.TaskID)
+		rt.mu.Unlock()
+		if err := s.store.Delete(node.ID); err != nil && s.store.Node(node.ID) != nil {
+			// Keep the task so the agent can retry the acknowledgement.
+			rt.mu.Lock()
+			rt.pending[res.TaskID] = task
+			rt.mu.Unlock()
+			log.Printf("删除已清理节点 %s 失败: %v", node.ID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		s.mu.Lock()
+		delete(s.rt, node.ID)
+		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}

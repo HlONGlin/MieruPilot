@@ -122,6 +122,7 @@
               : `${Math.floor(d / 86400)} 天前`;
       }
       function status(n) {
+        if (n.deleting) return ["清理中", ""];
         return !n.registered
           ? ["未部署", ""]
           : n.online
@@ -158,6 +159,7 @@
         state.nodes = await api("GET", "/api/nodes");
       }
       async function renderNodes() {
+        clearTimeout(nodesTimer);
         shell(
           "节点总览",
           `<div class="page-head"><div><h2>节点总览</h2><p>集中管理所有主机与 mieru 端口</p></div><button class="btn primary" data-add-node>＋ 添加节点</button></div><div id="nodeBody"><div class="empty">加载中…</div></div>`,
@@ -171,6 +173,11 @@
             `<div class="empty">${esc(e.message)}</div>`;
         }
         bindGlobal();
+        if (state.nodes.some((n) => n.deleting)) {
+          nodesTimer = setTimeout(() => {
+            if (state.view === "nodes") renderNodes();
+          }, 3000);
+        }
       }
       function nodesView() {
         state.nodes = arrayOf(state.nodes);
@@ -184,6 +191,8 @@
         return `<div class="stats"><div class="stat"><div class="label">全部节点</div><strong>${total}</strong><em>已添加主机</em></div><div class="stat"><div class="label">在线节点</div><strong>${online}</strong><em>实时状态</em></div><div class="stat"><div class="label">运行中</div><strong>${running}</strong><em>mita 服务</em></div><div class="stat"><div class="label">启用端口</div><strong>${ports}</strong><em>全部节点合计</em></div></div>${total ? `<div class="node-grid">${arrayOf(state.nodes).map(nodeCard).join("")}</div>` : `<div class="empty"><div style="font-size:38px">⌁</div><h3>还没有节点</h3><p>添加一台主机后，就可以在这里集中管理。</p><button class="btn primary" data-add-node>添加第一个节点</button></div>`}`;
       }
       const nodeFilter = {query: '', status: 'all'};
+      let nodesTimer = 0;
+      let cleanupTimer = 0;
       function filteredNodes() {
         const query = nodeFilter.query.trim().toLocaleLowerCase();
         return arrayOf(state.nodes).filter(node => {
@@ -331,11 +340,27 @@
           );
           renderEgressPanel(n);
           bindGlobal();
+          if (n.deleting) scheduleNodeCleanup(n.id);
         } catch (e) {
+          if (e.status === 404 && state.node?.deleting) {
+            toast("节点已清理并从面板移除");
+            state.view = "nodes";
+            state.node = null;
+            history.replaceState(null, "", base);
+            render();
+            return;
+          }
           document.querySelector(".content").innerHTML =
             `<div class="empty">${esc(e.message || "加载节点详情失败")}</div>`;
           bindGlobal();
         }
+      }
+      function scheduleNodeCleanup(id) {
+        clearTimeout(cleanupTimer);
+        cleanupTimer = setTimeout(() => {
+          if (state.view !== "detail" || state.node?.id !== id) return;
+          renderDetail();
+        }, 3000);
       }
       function portStatus(p) {
         const status = !p.enabled
@@ -452,7 +477,10 @@
           ?.addEventListener("click", editNode);
         document
           .querySelector("[data-delete-node]")
-          ?.addEventListener("click", deleteNode);
+          ?.addEventListener("click", () => deleteNode(false));
+        document
+          .querySelector("[data-force-delete]")
+          ?.addEventListener("click", () => deleteNode(true));
         document
           .querySelector("[data-save-node]")
           ?.addEventListener("click", saveNode);
@@ -510,11 +538,30 @@
         toast("节点信息已保存");
         renderDetail();
       }
-      async function deleteNode() {
-        if (!confirm("确定删除此节点及其所有端口？")) return;
-        await api("DELETE", "/api/nodes/" + state.node.id);
+      async function deleteNode(force) {
+        const id = state.node.id;
+        if (
+          !confirm(
+            force
+              ? "强制移除面板记录？目标机上的 Agent 与端口不会被清理，仍会继续运行。"
+              : "确定删除此节点？将停止并删除远程 Agent、所有 mita 端口与账号。",
+          )
+        )
+          return;
+        const result = await api(
+          "DELETE",
+          "/api/nodes/" + id + (force ? "?force=1" : ""),
+        );
+        if (result && result.deleting) {
+          toast("已下发清理指令，等待 Agent 清理远程环境…");
+          state.node = { ...state.node, deleting: true };
+          renderDetail();
+          return;
+        }
+        toast("节点已删除");
         state.view = "nodes";
         state.node = null;
+        history.replaceState(null, "", base);
         render();
       }
       async function togglePort(id) {
@@ -533,8 +580,10 @@
         renderDetail();
       }
       async function deletePort(id) {
-        if (!confirm("确定删除这个端口？")) return;
+        if (!confirm("确定删除这个端口？将立即停止该端口实例并删除对应账号。"))
+          return;
         await api("DELETE", "/api/nodes/" + state.node.id + "/ports/" + id);
+        toast("端口已删除，正在停止实例并清理账号");
         renderDetail();
       }
       async function retryPort(id) {
@@ -580,8 +629,14 @@
           [st, cl] = status(n),
           map = Object.fromEntries(
             arrayOf(safeLinks).map((x) => [x?.id, x?.link]),
-          );
-        return `<button type="button" class="back" data-back>← 返回节点总览</button><div class="page-head"><div><h2>${esc(n.name)} <span class="state ${cl}">${st}</span></h2><p>${esc(n.address || n.seenIP || "等待 Agent 上线")} · 最后在线 ${ago(n.lastSeen)}</p></div><div class="toolbar"><button type="button" class="btn" data-edit-node>编辑信息</button><button type="button" class="btn danger" data-delete-node>删除节点</button></div></div><div class="panel"><div class="panel-head"><h3>① 部署 Agent</h3><span class="muted">在目标服务器以 root 执行</span></div><div class="command"><code>${esc(install.command || "部署命令暂不可用")}</code><button type="button" class="btn" data-copy="${esc(install.command || "")}">复制命令</button></div><div class="form-row" style="margin-top:16px"><div class="field"><label>公网 IP / 地址</label><input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || "自动探测")}"></div><div class="field"><label>域名（可选）</label><input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div><button type="button" class="btn primary" data-save-node>保存节点信息</button></div><p class="muted" style="font-size:12px;margin:12px 0 0">系统：${esc(n.os || "—")} · 架构：${esc(n.arch || "—")} · mita：${esc(n.mitaVer || "—")} · Agent：${esc(n.agentVer || "—")}</p></div><div class="panel"><div class="panel-head"><h3>② 端口与账号</h3><span class="muted">点击“展开”查看该端口的 Mieru 和 Clash 操作</span><button type="button" class="btn primary" data-add-port>＋ 生成端口</button></div>${
+          ),
+          actions = n.deleting
+            ? '<button type="button" class="btn danger" data-force-delete>强制移除记录</button>'
+            : '<button type="button" class="btn" data-edit-node>编辑信息</button><button type="button" class="btn danger" data-delete-node>删除节点</button>',
+          notice = n.deleting
+            ? `<div class="panel" style="border-color:var(--red)"><p style="margin:0">正在清理远程 Agent、所有 mita 端口与账号，清理完成后节点会自动从面板移除。若目标机已离线且无法恢复，可强制移除记录。</p>${n.lastError ? `<p class="muted" style="margin:8px 0 0;color:var(--red)">${esc(n.lastError)}</p>` : ""}</div>`
+            : "";
+        return `<button type="button" class="back" data-back>← 返回节点总览</button><div class="page-head"><div><h2>${esc(n.name)} <span class="state ${cl}">${st}</span></h2><p>${esc(n.address || n.seenIP || "等待 Agent 上线")} · 最后在线 ${ago(n.lastSeen)}</p></div><div class="toolbar">${actions}</div></div>${notice}<div class="panel"><div class="panel-head"><h3>① 部署 Agent</h3><span class="muted">在目标服务器以 root 执行</span></div><div class="command"><code>${esc(install.command || "部署命令暂不可用")}</code><button type="button" class="btn" data-copy="${esc(install.command || "")}">复制命令</button></div><div class="form-row" style="margin-top:16px"><div class="field"><label>公网 IP / 地址</label><input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || "自动探测")}"></div><div class="field"><label>域名（可选）</label><input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div><button type="button" class="btn primary" data-save-node>保存节点信息</button></div><p class="muted" style="font-size:12px;margin:12px 0 0">系统：${esc(n.os || "—")} · 架构：${esc(n.arch || "—")} · mita：${esc(n.mitaVer || "—")} · Agent：${esc(n.agentVer || "—")}</p></div><div class="panel"><div class="panel-head"><h3>② 端口与账号</h3><span class="muted">点击“展开”查看该端口的 Mieru 和 Clash 操作</span><button type="button" class="btn primary" data-add-port>＋ 生成端口</button></div>${
           ports.length
             ? `<div class="table-wrap"><table><thead><tr><th>端口</th><th>协议</th><th>标签</th><th>账号</th><th>状态</th><th>操作</th></tr></thead><tbody>${arrayOf(
                 ports,

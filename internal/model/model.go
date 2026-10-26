@@ -37,10 +37,10 @@ type Port struct {
 	InstanceError    string    `json:"instanceError,omitempty"`
 
 	// Traffic control and statistics
-	TrafficLimit     int64     `json:"trafficLimit,omitempty"`     // Monthly limit in bytes, 0 = unlimited
-	TrafficUsed      int64     `json:"trafficUsed,omitempty"`      // Used traffic in bytes
-	TrafficResetAt   time.Time `json:"trafficResetAt,omitempty"`   // When the traffic counter was last reset
-	BandwidthLimit   int64     `json:"bandwidthLimit,omitempty"`   // Speed limit in bytes/sec, 0 = unlimited
+	TrafficLimit   int64     `json:"trafficLimit,omitempty"`   // Monthly limit in bytes, 0 = unlimited
+	TrafficUsed    int64     `json:"trafficUsed,omitempty"`    // Used traffic in bytes
+	TrafficResetAt time.Time `json:"trafficResetAt,omitempty"` // When the traffic counter was last reset
+	BandwidthLimit int64     `json:"bandwidthLimit,omitempty"` // Speed limit in bytes/sec, 0 = unlimited
 }
 
 // Node represents one managed host running the merit agent and mita.
@@ -65,6 +65,11 @@ type Node struct {
 	Registered  bool      `json:"registered"`
 	LastSeen    time.Time `json:"lastSeen"`
 	LastError   string    `json:"lastError,omitempty"`
+
+	// Deleting marks a node whose remote cleanup has been requested. The node
+	// record is kept until the agent acknowledges the purge task so it can
+	// still authenticate and report progress.
+	Deleting bool `json:"deleting,omitempty"`
 
 	// Runtime only fields (not persisted).
 	SeenIP string `json:"-"`
@@ -175,6 +180,9 @@ type Task struct {
 const (
 	TaskSync       = "sync"
 	TaskTestEgress = "test-egress"
+	// TaskPurge tears down everything the agent installed on the host: port
+	// instances, configs/accounts, mita and the agent service itself.
+	TaskPurge = "purge"
 )
 
 // AgentStatus is a status snapshot reported by an agent.
@@ -192,11 +200,11 @@ type AgentStatus struct {
 }
 
 type PortInstanceStatus struct {
-	Port         int   `json:"port"`
-	Running      bool  `json:"running"`
+	Port         int    `json:"port"`
+	Running      bool   `json:"running"`
 	Error        string `json:"error,omitempty"`
-	TrafficUsed  int64 `json:"trafficUsed,omitempty"`  // Traffic used since last report
-	TotalTraffic int64 `json:"totalTraffic,omitempty"` // Total accumulated traffic
+	TrafficUsed  int64  `json:"trafficUsed,omitempty"`  // Traffic used since last report
+	TotalTraffic int64  `json:"totalTraffic,omitempty"` // Total accumulated traffic
 }
 
 // TaskResult is the result of executing a Task.

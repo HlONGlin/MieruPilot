@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"merit/internal/buildinfo"
@@ -45,6 +46,9 @@ type Agent struct {
 	client     *http.Client
 	poll       *http.Client
 	instanceID string
+	// purging disables the maintenance loops so they cannot reinstall mita
+	// while the node is being torn down.
+	purging atomic.Bool
 }
 
 // New creates an agent.
@@ -101,6 +105,11 @@ func (a *Agent) Run(ctx context.Context) error {
 				return ctx.Err()
 			case <-time.After(a.cfg.Interval):
 			}
+			if a.purging.Load() {
+				// The manager already removed the node; reporting would only
+				// log a 401 while the cleanup unit is being scheduled.
+				continue
+			}
 			_ = a.report(a.status(a.mitaInstalled(), nil))
 			continue
 		}
@@ -125,6 +134,9 @@ func (a *Agent) installLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if a.purging.Load() {
+					return
+				}
 				if !a.mitaInstalled() {
 					_, _ = a.ensureMita()
 				}
@@ -147,6 +159,9 @@ func (a *Agent) reportLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if a.purging.Load() {
+					return
+				}
 				_ = a.report(a.status(a.mitaInstalled(), nil))
 			}
 		}
@@ -254,6 +269,24 @@ func (a *Agent) apply(t *model.Task) error {
 		if reportErr := a.reportResult(res); reportErr != nil {
 			fmt.Fprintf(os.Stderr, "任务结果回报失败: %v\n", reportErr)
 			return reportErr
+		}
+		return err
+	case model.TaskPurge:
+		a.purging.Store(true)
+		msg, err := a.purgeAll()
+		res := model.TaskResult{TaskID: t.ID, OK: err == nil, Message: msg}
+		if err != nil {
+			res.Message = err.Error()
+		}
+		if reportErr := a.reportResult(res); reportErr != nil {
+			return reportErr
+		}
+		if err == nil {
+			// Report first so the manager can remove the node record, then
+			// detach a short-lived unit that deletes the agent itself.
+			if removeErr := a.scheduleSelfRemoval(); removeErr != nil {
+				fmt.Fprintf(os.Stderr, "安排 Agent 自移除失败: %v\n", removeErr)
+			}
 		}
 		return err
 	default:
@@ -649,6 +682,107 @@ func (a *Agent) removeStaleInstances(desired map[int]bool) ([]model.PortInstance
 		return stopped, fmt.Errorf("清理实例后 systemd 重载失败: %w", err)
 	}
 	return stopped, nil
+}
+
+// purgeAll stops and removes every trace installed by the agent: the per-port
+// mita instances, their config files (which hold the account credentials), the
+// legacy mita service and the mita package. The agent itself is removed by
+// scheduleSelfRemoval after the result has been reported.
+func (a *Agent) purgeAll() (string, error) {
+	var problems []string
+	var warnings []string
+
+	// Stop the package's legacy single-instance service so it cannot restart
+	// while the per-port instances are being removed.
+	_, _ = a.run("systemctl", "disable", "--now", "mita.service")
+	_, _ = a.run("mita", "stop")
+
+	entries, err := os.ReadDir("/etc/systemd/system")
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("读取 systemd 目录失败: %v", err))
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "merit-mita-") || !strings.HasSuffix(name, ".service") {
+			continue
+		}
+		unit := strings.TrimSuffix(name, ".service")
+		if out, err := a.run("systemctl", "disable", "--now", unit+".service"); err != nil {
+			// A vanished unit is fine; a still-running one must be retried.
+			if active, _ := a.instanceRunning(parseInstancePort(unit)); active {
+				problems = append(problems, fmt.Sprintf("停止 %s 失败: %v %s", unit, err, strings.TrimSpace(out)))
+				continue
+			}
+		}
+		if err := os.Remove(filepath.Join("/etc/systemd/system", name)); err != nil && !os.IsNotExist(err) {
+			problems = append(problems, fmt.Sprintf("删除 %s 失败: %v", name, err))
+		}
+	}
+	_, _ = a.run("systemctl", "daemon-reload")
+
+	if err := os.RemoveAll("/etc/merit-mita"); err != nil {
+		problems = append(problems, fmt.Sprintf("删除端口配置与账号失败: %v", err))
+	}
+	// Remove the legacy single-instance config as well; it embeds an account
+	// created before the per-port layout.
+	_ = os.RemoveAll("/etc/mita")
+	_ = os.RemoveAll("/var/lib/mita")
+	_ = os.RemoveAll("/var/log/mita")
+	_ = os.RemoveAll("/var/run/mita")
+
+	// Remove the mita package. This is best effort: all instances are already
+	// stopped and their configs deleted, so a packaging failure should not keep
+	// the node in the panel forever.
+	if a.mitaInstalled() {
+		if kind, err := packageManager(); err == nil {
+			var out string
+			if kind == "deb" {
+				out, err = a.run("dpkg", "-P", "mita")
+			} else {
+				out, err = a.run("rpm", "-e", "mita")
+			}
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("卸载 mita 包失败: %v %s", err, strings.TrimSpace(out)))
+			}
+		}
+	}
+
+	if len(problems) > 0 {
+		return "", fmt.Errorf("清理未完成: %s", strings.Join(problems, "；"))
+	}
+	msg := "已停止并删除所有 mita 实例、端口账号与 mita 包，Agent 即将自移除"
+	if len(warnings) > 0 {
+		msg += "（" + strings.Join(warnings, "；") + "）"
+	}
+	return msg, nil
+}
+
+func parseInstancePort(unit string) int {
+	var port int
+	_, _ = fmt.Sscanf(strings.TrimPrefix(unit, "merit-mita-"), "%d", &port)
+	return port
+}
+
+// scheduleSelfRemoval starts a transient systemd unit that deletes the agent
+// service and binary after the purge result has been delivered. The transient
+// unit lives outside the agent's cgroup, so stopping merit-agent cannot kill
+// the cleanup itself.
+func (a *Agent) scheduleSelfRemoval() error {
+	script := "sleep 3; systemctl disable --now merit-agent.service >/dev/null 2>&1 || true; " +
+		"rm -f /etc/systemd/system/merit-agent.service /usr/local/bin/merit-agent; " +
+		"systemctl daemon-reload >/dev/null 2>&1 || true"
+	unit := fmt.Sprintf("merit-agent-cleanup-%d", time.Now().UnixNano())
+	if out, err := a.run("systemd-run", "--unit="+unit, "--collect", "/bin/sh", "-c", script); err == nil {
+		return nil
+	} else if strings.TrimSpace(out) != "" {
+		fmt.Fprintf(os.Stderr, "systemd-run 自移除失败: %v %s\n", err, strings.TrimSpace(out))
+	}
+	// Non-systemd fallback: detach a best-effort shell.
+	cmd := exec.Command("/bin/sh", "-c", "( "+script+" ) >/dev/null 2>&1 &")
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
 }
 
 func (a *Agent) status(installed bool, lastErr error) model.AgentStatus {

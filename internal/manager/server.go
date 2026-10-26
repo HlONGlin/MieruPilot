@@ -209,6 +209,10 @@ func (s *Server) nodeRuntime(id string) *nodeRuntime {
 }
 
 func (s *Server) enqueueSync(n *model.Node) {
+	if n.Deleting {
+		// The node is being purged; a stale sync must not replace the purge task.
+		return
+	}
 	r := s.nodeRuntime(n.ID)
 	r.mu.Lock()
 	config := n.BuildDesired()
@@ -239,6 +243,9 @@ func (s *Server) enqueueSync(n *model.Node) {
 }
 
 func (s *Server) enqueuePortSync(n *model.Node, portID string) error {
+	if n.Deleting {
+		return fmt.Errorf("节点正在删除，无法同步端口")
+	}
 	var target *model.Port
 	for _, p := range n.Ports {
 		if p.ID == portID {
@@ -297,6 +304,40 @@ func (s *Server) enqueuePortSync(n *model.Node, portID string) error {
 	default:
 	}
 	return nil
+}
+
+// enqueuePurge supersedes every queued task with a remote teardown request.
+// The node record stays in the store until the agent acknowledges success so
+// that the agent keeps a valid API key while cleaning up.
+func (s *Server) enqueuePurge(n *model.Node) {
+	r := s.nodeRuntime(n.ID)
+	r.mu.Lock()
+	r.pending = map[string]*model.Task{}
+	taskID := fmt.Sprintf("purge-%s-%d", n.ID, time.Now().UnixNano())
+	r.pending[taskID] = &model.Task{ID: taskID, Kind: model.TaskPurge, CreatedAt: time.Now()}
+	if err := s.store.SetTasks(n.ID, r.pending); err != nil {
+		log.Printf("保存节点 %s 清理任务失败: %v", n.ID, err)
+	}
+	r.mu.Unlock()
+	select {
+	case r.notify <- struct{}{}:
+	default:
+	}
+}
+
+// ensurePurge re-queues the purge task when it was lost (for example a failed
+// SetTasks) while the node is still marked as deleting.
+func (s *Server) ensurePurge(n *model.Node) {
+	r := s.nodeRuntime(n.ID)
+	r.mu.Lock()
+	for _, task := range r.pending {
+		if task.Kind == model.TaskPurge {
+			r.mu.Unlock()
+			return
+		}
+	}
+	r.mu.Unlock()
+	s.enqueuePurge(n)
 }
 
 func (s *Server) pollTasks(id string, wait time.Duration) []*model.Task {

@@ -90,6 +90,7 @@ type nodeDTO struct {
 	LastSeen    time.Time           `json:"lastSeen"`
 	LastError   string              `json:"lastError"`
 	SeenIP      string              `json:"seenIP"`
+	Deleting    bool                `json:"deleting"`
 	Egress      *model.EgressConfig `json:"egress,omitempty"`
 }
 
@@ -114,6 +115,7 @@ func toDTO(n *model.Node) nodeDTO {
 		LastSeen:    n.LastSeen,
 		LastError:   n.LastError,
 		SeenIP:      n.SeenIP,
+		Deleting:    n.Deleting,
 		Egress:      egressDTO(n.Egress),
 	}
 }
@@ -394,6 +396,42 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	n := s.store.Node(id)
+	if n == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "node not found"})
+		return
+	}
+	// force only removes the panel record. It is the fallback for a host that
+	// will never come back; the remote cleanup cannot run without an agent.
+	if r.URL.Query().Get("force") == "1" {
+		s.deleteNodeRecord(w, id)
+		return
+	}
+	// Nothing was deployed, so there is nothing to tear down remotely.
+	if !n.Deleting && !n.Registered && n.AgentID == "" {
+		s.deleteNodeRecord(w, id)
+		return
+	}
+	if n.Deleting {
+		// Retry idempotently; re-queue the purge if it was lost.
+		s.ensurePurge(n)
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "deleting": true})
+		return
+	}
+	updated, err := s.store.Update(id, func(n *model.Node) error {
+		n.Deleting = true
+		n.LastError = "正在清理远程 Agent、mita 实例与账号…"
+		return nil
+	})
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	s.enqueuePurge(updated)
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "deleting": true})
+}
+
+func (s *Server) deleteNodeRecord(w http.ResponseWriter, id string) {
 	if err := s.store.Delete(id); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		return

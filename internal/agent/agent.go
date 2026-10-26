@@ -828,6 +828,9 @@ func (a *Agent) instanceStatuses() []model.PortInstanceStatus {
 		}
 		running, statusErr := a.instanceRunning(port)
 		result := model.PortInstanceStatus{Port: port, Running: running}
+		if total, err := a.trafficForPort(port); err == nil {
+			result.TotalTraffic = total
+		}
 		if statusErr != nil {
 			result.Error = statusErr.Error()
 		}
@@ -836,12 +839,66 @@ func (a *Agent) instanceStatuses() []model.PortInstanceStatus {
 	return out
 }
 
+type mitaMetrics struct {
+	Users map[string]struct {
+		DownloadBytes int64 `json:"DownloadBytes"`
+		UploadBytes   int64 `json:"UploadBytes"`
+	} `json:"users"`
+}
+
+// trafficForPort reads the live metrics through the port's private mita UDS.
+func (a *Agent) trafficForPort(port int) (int64, error) {
+	data, err := os.ReadFile(filepath.Join("/etc/merit-mita", strconv.Itoa(port)+".json"))
+	if err != nil {
+		return 0, err
+	}
+	var cfg struct {
+		Users []struct {
+			Name string `json:"name"`
+		} `json:"users"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil || len(cfg.Users) == 0 || cfg.Users[0].Name == "" {
+		return 0, fmt.Errorf("无法读取端口 %d 的 mita 用户", port)
+	}
+	out, err := a.runWithEnv(10*time.Second, map[string]string{"MITA_UDS_PATH": fmt.Sprintf("/var/run/mita/merit-mita-%d.sock", port)}, "mita", "get", "metrics")
+	if err != nil {
+		return 0, err
+	}
+	return parseMitaMetrics(out, cfg.Users[0].Name)
+}
+
+func parseMitaMetrics(out, username string) (int64, error) {
+	start, end := strings.IndexByte(out, '{'), strings.LastIndexByte(out, '}')
+	if start < 0 || end < start {
+		return 0, fmt.Errorf("mita metrics 返回格式无效")
+	}
+	var metrics mitaMetrics
+	if err := json.Unmarshal([]byte(out[start:end+1]), &metrics); err != nil {
+		return 0, err
+	}
+	m, ok := metrics.Users[username]
+	if !ok {
+		return 0, fmt.Errorf("mita metrics 中不存在用户 %q", username)
+	}
+	return m.DownloadBytes + m.UploadBytes, nil
+}
+
 // --- process helpers --------------------------------------------------------
 
 func (a *Agent) run(name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	return a.runWithEnv(60*time.Second, nil, name, args...)
+}
+
+func (a *Agent) runWithEnv(timeout time.Duration, extra map[string]string, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	if len(extra) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range extra {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

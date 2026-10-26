@@ -57,3 +57,16 @@ func TestEgressForPortAddsWildcardForAllDestinations(t *testing.T) {
 		t.Fatalf("expected wildcard catch-all rule, got %+v", got)
 	}
 }
+
+func TestParseMitaMetricsExtractsUserTrafficFromLogWrappedJSON(t *testing.T) {
+	got, err := parseMitaMetrics("2026-01-01 INFO prefix {\"users\":{\"u\":{\"DownloadBytes\":1200,\"UploadBytes\":800}}} suffix", "u")
+	if err != nil || got != 2000 {
+		t.Fatalf("expected 2000 bytes, got %d, err=%v", got, err)
+	}
+}
+
+func TestParseMitaMetricsRejectsUnknownUser(t *testing.T) {
+	if _, err := parseMitaMetrics(`{"users":{"other":{"DownloadBytes":1}}}`, "u"); err == nil {
+		t.Fatal("expected missing user error")
+	}
+}

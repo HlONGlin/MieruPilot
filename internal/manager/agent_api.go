@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"merit/internal/model"
+	"merit/internal/traffic"
 )
 
 func agentKey(r *http.Request) string {
@@ -52,6 +53,7 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 	if ip == "" {
 		ip = remoteIP(r)
 	}
+	needsSync := false
 	n, err := s.store.Update(node.ID, func(n *model.Node) error {
 		n.Registered = true
 		n.LastSeen = time.Now()
@@ -75,6 +77,9 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 				} else if instance.Running && p.InstanceError == "" {
 					p.InstanceError = ""
 				}
+				if updatePortTraffic(p, instance.TotalTraffic, time.Now()) {
+					needsSync = true
+				}
 			}
 		}
 		n.SeenIP = ip
@@ -96,7 +101,7 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		// Keep the teardown request alive if it was lost, and never replace it
 		// with a regular config sync.
 		s.ensurePurge(n)
-	} else if firstRegister || managerRestarted || newAgentInstance {
+	} else if needsSync || firstRegister || managerRestarted || newAgentInstance {
 		s.enqueueSync(n)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -194,6 +199,7 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	}
+	needsSync := false
 	_, saveErr := s.store.Update(node.ID, func(n *model.Node) error {
 		n.LastSeen = time.Now()
 		if res.Status != nil {
@@ -205,6 +211,9 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 							p.InstanceError = instance.Error
 						} else if instance.Running {
 							p.InstanceError = ""
+						}
+						if updatePortTraffic(p, instance.TotalTraffic, time.Now()) {
+							needsSync = true
 						}
 					}
 				}
@@ -240,6 +249,13 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "保存任务状态失败"})
 		return
 	}
+	if needsSync && !node.Deleting {
+		if updated := s.store.Node(node.ID); updated != nil {
+			rt.mu.Unlock()
+			s.enqueueSync(updated)
+			rt.mu.Lock()
+		}
+	}
 	if res.OK {
 		task := rt.pending[res.TaskID]
 		delete(rt.pending, res.TaskID)
@@ -250,6 +266,39 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// updatePortTraffic folds mita's process-local monotonically increasing metric
+// into the manager's persistent counter. A decrease means mita restarted.
+func updatePortTraffic(p *model.Port, raw int64, now time.Time) bool {
+	if raw <= 0 {
+		return false
+	}
+	changed := false
+	if traffic.ShouldResetTraffic(p.TrafficResetAt) {
+		p.TrafficUsed = 0
+		p.TrafficRaw = raw
+		p.TrafficResetAt = now
+		if p.AutoDisabled {
+			p.AutoDisabled = false
+			p.Enabled = true
+			changed = true
+		}
+	}
+	delta := raw - p.TrafficRaw
+	if delta < 0 {
+		delta = raw
+	}
+	if delta > 0 {
+		p.TrafficUsed += delta
+	}
+	p.TrafficRaw = raw
+	if p.TrafficLimit > 0 && traffic.IsTrafficExceeded(p.TrafficUsed, p.TrafficLimit) && p.Enabled {
+		p.Enabled = false
+		p.AutoDisabled = true
+		changed = true
+	}
+	return changed
 }
 
 func hasRetryablePortFailure(res model.TaskResult) bool {

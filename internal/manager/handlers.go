@@ -521,14 +521,27 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 			p.Password = mieru.GeneratePassword()
 		}
 		if req.TrafficLimit != nil {
-			p.TrafficLimit = *req.TrafficLimit
+			p.TrafficLimit = maxInt64(0, *req.TrafficLimit)
 		}
 		if req.BandwidthLimit != nil {
 			p.BandwidthLimit = *req.BandwidthLimit
 		}
 		if req.ResetTraffic {
 			p.TrafficUsed = 0
+			p.TrafficRaw = 0
 			p.TrafficResetAt = time.Now()
+			if p.AutoDisabled {
+				p.AutoDisabled = false
+				p.Enabled = true
+			}
+		}
+		if p.AutoDisabled && (p.TrafficLimit == 0 || p.TrafficUsed < p.TrafficLimit) {
+			p.AutoDisabled = false
+			p.Enabled = true
+		}
+		if p.TrafficLimit > 0 && p.TrafficUsed >= p.TrafficLimit && p.Enabled {
+			p.Enabled = false
+			p.AutoDisabled = true
 		}
 		return nil
 	})
@@ -538,6 +551,13 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 	}
 	s.enqueueSync(n)
 	writeJSON(w, http.StatusOK, toDTO(n))
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 var errNodeNotFound = &simpleError{"端口不存在"}

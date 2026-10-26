@@ -41,6 +41,8 @@ type Port struct {
 	TrafficUsed    int64     `json:"trafficUsed,omitempty"`    // Used traffic in bytes
 	TrafficResetAt time.Time `json:"trafficResetAt,omitempty"` // When the traffic counter was last reset
 	BandwidthLimit int64     `json:"bandwidthLimit,omitempty"` // Speed limit in bytes/sec, 0 = unlimited
+	TrafficRaw     int64     `json:"trafficRaw,omitempty"`     // Last raw mita metric counter
+	AutoDisabled   bool      `json:"autoDisabled,omitempty"`   // Disabled automatically after exceeding the limit
 }
 
 // Node represents one managed host running the merit agent and mita.

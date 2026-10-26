@@ -514,6 +514,9 @@
         document
           .querySelectorAll("[data-retry-port]")
           .forEach((x) => (x.onclick = () => retryPort(x.dataset.retryPort)));
+        document
+          .querySelectorAll("[data-traffic-port]")
+          .forEach((x) => (x.onclick = () => manageTraffic(x.dataset.trafficPort)));
       }
       function editNode() {
         const n = state.node;
@@ -598,6 +601,36 @@
           toast(e.message);
         }
       }
+      async function manageTraffic(id) {
+        const p = (state.node?.ports || []).find((x) => x.id === id);
+        if (!p) return;
+        modal(
+          "流量管理",
+          `<div class="field"><label>月度流量限额（GB，0 表示不限）</label><input name="trafficGB" type="number" min="0" step="0.01" value="${p.trafficLimit ? (p.trafficLimit / 1073741824).toFixed(2) : "0"}" required></div><p class="muted">当前已用：${formatTraffic(p.trafficUsed || 0)}。每月自动重置；达到限额后端口会自动停用，重置或调整限额后恢复。</p><p class="muted">mita 当前不支持可靠的服务端速率限制，带宽设置不会生效。</p><button type="button" class="btn" data-reset-traffic>立即重置流量</button>`,
+          async (f) => {
+            const gb = Number(f.get("trafficGB"));
+            if (!Number.isFinite(gb) || gb < 0) throw new Error("流量限额必须是非负数字");
+            await api("PATCH", "/api/nodes/" + state.node.id + "/ports/" + id, {
+              trafficLimit: Math.round(gb * 1073741824),
+              resetTraffic: f.get("resetTraffic") === "1",
+            });
+            toast("流量设置已保存");
+            await renderDetail();
+          },
+        );
+        document.querySelector("[data-reset-traffic]")?.addEventListener("click", () => {
+          const form = document.getElementById("modalForm");
+          let input = form.querySelector('[name="resetTraffic"]');
+          if (!input) {
+            input = document.createElement("input");
+            input.type = "hidden";
+            input.name = "resetTraffic";
+            input.value = "1";
+            form.appendChild(input);
+          }
+          toast("已选择重置，点击确认保存");
+        });
+      }
       async function downloadClash() {
         const r = await fetch(
           url("/api/nodes/" + state.node.id + "/clash.yaml"),
@@ -619,7 +652,8 @@
         const clashURL =
             location.origin + url("/api/nodes/" + nodeID + "/clash.yaml"),
           detailID = "port-detail-" + p.id;
-        return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span></td><td>${esc(p.label || "—")}</td><td><code>${esc(p.username)}</code></td><td>${portStatus(p)}</td><td><div class="toolbar">${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制 Mieru</button>` : ""}<button type="button" class="btn small" data-retry-port="${esc(p.id)}" ${p.enabled ? "" : "disabled"}>重试同步</button><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><button type="button" class="btn small" data-regenerate="${p.id}">重置账号</button><button type="button" class="btn small danger" data-delete-port="${p.id}">删除</button></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="6" class="port-detail"><div class="port-detail-title">原生 Mieru 链接</div><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制 Mieru</button>` : ""}</div><div class="port-detail-title" style="margin-top:12px">Clash / mihomo 单节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
+         const traffic = p.trafficLimit ? `${formatTraffic(p.trafficUsed || 0)} / ${formatTraffic(p.trafficLimit)} (${Math.min(100, Math.round((p.trafficUsed || 0) / p.trafficLimit * 100))}%)` : `已用 ${formatTraffic(p.trafficUsed || 0)} / 不限`;
+         return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span></td><td>${esc(p.label || "—")}</td><td><code>${esc(p.username)}</code></td><td><span class="traffic-cell">${esc(traffic)}${p.autoDisabled ? " · 已超限停用" : ""}</span></td><td>${portStatus(p)}</td><td><div class="toolbar"><button type="button" class="btn small" data-traffic-port="${esc(p.id)}">流量设置</button>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制 Mieru</button>` : ""}<button type="button" class="btn small" data-retry-port="${esc(p.id)}" ${p.enabled ? "" : "disabled"}>重试同步</button><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><button type="button" class="btn small" data-regenerate="${p.id}">重置账号</button><button type="button" class="btn small danger" data-delete-port="${p.id}">删除</button></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="7" class="port-detail"><div class="port-detail-title">原生 Mieru 链接</div><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制 Mieru</button>` : ""}</div><div class="port-detail-title" style="margin-top:12px">Clash / mihomo 单节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
       }
       function detailView(n, install, links) {
         n = n && typeof n === "object" ? n : {};
@@ -638,7 +672,7 @@
             : "";
         return `<button type="button" class="back" data-back>← 返回节点总览</button><div class="page-head"><div><h2>${esc(n.name)} <span class="state ${cl}">${st}</span></h2><p>${esc(n.address || n.seenIP || "等待 Agent 上线")} · 最后在线 ${ago(n.lastSeen)}</p></div><div class="toolbar">${actions}</div></div>${notice}<div class="panel"><div class="panel-head"><h3>① 部署 Agent</h3><span class="muted">在目标服务器以 root 执行</span></div><div class="command"><code>${esc(install.command || "部署命令暂不可用")}</code><button type="button" class="btn" data-copy="${esc(install.command || "")}">复制命令</button></div><div class="form-row" style="margin-top:16px"><div class="field"><label>公网 IP / 地址</label><input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || "自动探测")}"></div><div class="field"><label>域名（可选）</label><input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div><button type="button" class="btn primary" data-save-node>保存节点信息</button></div><p class="muted" style="font-size:12px;margin:12px 0 0">系统：${esc(n.os || "—")} · 架构：${esc(n.arch || "—")} · mita：${esc(n.mitaVer || "—")} · Agent：${esc(n.agentVer || "—")}</p></div><div class="panel"><div class="panel-head"><h3>② 端口与账号</h3><span class="muted">点击“展开”查看该端口的 Mieru 和 Clash 操作</span><button type="button" class="btn primary" data-add-port>＋ 生成端口</button></div>${
           ports.length
-            ? `<div class="table-wrap"><table><thead><tr><th>端口</th><th>协议</th><th>标签</th><th>账号</th><th>状态</th><th>操作</th></tr></thead><tbody>${arrayOf(
+             ? `<div class="table-wrap"><table><thead><tr><th>端口</th><th>协议</th><th>标签</th><th>账号</th><th>流量</th><th>状态</th><th>操作</th></tr></thead><tbody>${arrayOf(
                 ports,
               )
                 .map((p) => portRow(p, map[p?.id], n.id))

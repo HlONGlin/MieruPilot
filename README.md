@@ -118,15 +118,15 @@
 
 ## 🚀 快速开始
 
-### 一键安装脚本
+### ⚡ 一键安装（推荐）
 
-使用项目提供的一键脚本完成 Manager 的安装与管理：
+使用一键脚本完成 Manager 的安装与管理：
 
 ```bash
 bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 ```
 
-### 脚本菜单
+**脚本功能：**
 
 ```
 1. 安装或更新 Manager
@@ -136,7 +136,7 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
 5. 重置管理员账号（保留节点数据）
 ```
 
-### 首次安装
+**安装步骤：**
 
 1. 运行一键脚本，选择 `1. 安装或更新 Manager`
 2. 脚本会自动：
@@ -150,15 +150,43 @@ bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
    ```
 4. 打开管理地址，使用刚设置的账号登录
 
-### 系统要求
+### 📦 手动安装
 
-- **控制机**：Linux/Windows/macOS，支持 amd64/arm64
-- **节点服务器**：
-  - Linux with systemd
-  - dpkg (Debian/Ubuntu) 或 rpm (CentOS/RedHat/Rocky)
-  - amd64 或 arm64 架构
+如果不使用一键脚本，也可以手动安装：
 
-### 依赖安装
+#### 1. 下载二进制文件
+
+前往 [Releases](https://github.com/HlONGlin/MieruPilot/releases/latest) 下载对应平台的二进制文件。
+
+#### 2. 启动 Manager
+
+```bash
+chmod +x merit-manager-linux-amd64
+./merit-manager-linux-amd64 --addr :3000
+```
+
+首次启动会提示设置管理员账号，按提示操作即可。
+
+#### 3. 访问面板
+
+打开浏览器访问：`http://服务器IP:3000/panel/随机后缀`
+
+管理地址会在首次启动时输出，请妥善保存。
+
+### 💻 系统要求
+
+**控制机（Manager）：**
+- 操作系统：Linux/Windows/macOS
+- 架构：amd64 或 arm64
+- 内存：最低 512MB，推荐 1GB+
+
+**节点服务器（Agent）：**
+- 操作系统：Linux with systemd
+- 包管理器：dpkg (Debian/Ubuntu) 或 rpm (CentOS/RedHat/Rocky)
+- 架构：amd64 或 arm64
+- 内存：最低 256MB，推荐 512MB+
+
+### 🔧 依赖安装
 
 如果提示没有 `curl` 或 `wget`：
 

@@ -38,7 +38,9 @@ func ServerArgs(port *model.Port, configPath string) []string {
 }
 
 // SimpleLink generates a share link for ShadowTLS v3.
-// Format: shadowtls://password@host:port?handshake=example.com:443
+// ShadowTLS requires a backend Shadowsocks server
+// v2rayN format: uses custom URI or JSON config
+// For now, return a JSON config hint since v2rayN doesn't have native shadowtls:// support
 func SimpleLink(n *model.Node, p *model.Port) string {
 	host := n.Address
 	if host == "" {
@@ -47,11 +49,13 @@ func SimpleLink(n *model.Node, p *model.Port) string {
 
 	handshake := p.HandshakeAddr
 	if handshake == "" {
-		handshake = "example.com:443"
+		handshake = "cloudflare.com:443"
 	}
 
-	return fmt.Sprintf("shadowtls://%s@%s:%d?handshake=%s",
-		p.Password, host, p.Port, handshake)
+	// Return a descriptive link with connection info
+	// Users need to manually configure v2rayN with these parameters
+	return fmt.Sprintf("shadowtls://%s:%d?password=%s&handshake=%s&version=3#ShadowTLS-v3",
+		host, p.Port, p.Password, handshake)
 }
 
 // ConfigPath returns the config file path for a port instance.

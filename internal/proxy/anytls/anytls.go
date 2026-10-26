@@ -14,29 +14,22 @@ const (
 )
 
 // GenerateConfig generates configuration for AnyTLS server.
+// AnyTLS uses a simple config format
 func GenerateConfig(port *model.Port) string {
-	// AnyTLS uses command-line arguments, not a config file
-	// Return the arguments as a pseudo-config
 	return fmt.Sprintf(`{
-  "listen": ":%d",
-  "password": "%s",
-  "protocol": "%s"
-}`, port.Port, port.Password, port.Protocol)
+  "listen": "0.0.0.0:%d",
+  "password": "%s"
+}`, port.Port, port.Password)
 }
 
 // ServerArgs returns command-line arguments for AnyTLS server.
-func ServerArgs(port *model.Port) []string {
-	args := []string{
+// AnyTLS typical usage: anytls server -l 0.0.0.0:port -p password
+func ServerArgs(port *model.Port, configPath string) []string {
+	return []string{
 		"server",
-		"--listen", fmt.Sprintf(":%d", port.Port),
-		"--password", port.Password,
+		"-l", fmt.Sprintf("0.0.0.0:%d", port.Port),
+		"-p", port.Password,
 	}
-
-	if port.Protocol == model.ProtocolUDP {
-		args = append(args, "--udp")
-	}
-
-	return args
 }
 
 // SimpleLink generates a share link for AnyTLS.

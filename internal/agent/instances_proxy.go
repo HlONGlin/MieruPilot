@@ -113,6 +113,8 @@ Type=simple
 ExecStart=/usr/local/bin/caddy-naive run --config %s
 Restart=on-failure
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -147,7 +149,7 @@ func (a *Agent) startAnyTLSInstance(port *model.Port) error {
 
 	// Create systemd service
 	serviceName := a.proxyServiceName(port)
-	args := anytls.ServerArgs(port)
+	args := anytls.ServerArgs(port, configPath)
 	serviceContent := fmt.Sprintf(`[Unit]
 Description=AnyTLS Instance %s
 After=network.target
@@ -157,6 +159,8 @@ Type=simple
 ExecStart=/usr/local/bin/anytls %s
 Restart=on-failure
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -201,6 +205,8 @@ Type=simple
 ExecStart=/usr/local/bin/shadowtls %s
 Restart=on-failure
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

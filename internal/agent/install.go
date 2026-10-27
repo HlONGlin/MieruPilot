@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -96,10 +95,7 @@ func (a *Agent) packageURL(kind string) (string, string, error) {
 		}
 	}
 	url := fmt.Sprintf("https://github.com/enfein/mieru/releases/download/v%s/%s", ver, filename)
-	if a.cfg.MitaMirror != "" {
-		url = strings.TrimRight(a.cfg.MitaMirror, "/") + "/" + url
-	}
-	return url, filename, nil
+	return mirrorURL(a.cfg.MitaMirror, url), filename, nil
 }
 
 func runtimeArch() string { return runtime.GOARCH }
@@ -118,7 +114,25 @@ func download(url, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	written, copyErr := io.Copy(f, resp.Body)
+	syncErr := f.Sync()
+	closeErr := f.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if syncErr != nil {
+		return syncErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	// A mirror that answers with an error page or a truncated body would
+	// otherwise turn into a confusing "unexpected EOF" during extraction.
+	if written == 0 {
+		return fmt.Errorf("下载内容为空")
+	}
+	if resp.ContentLength > 0 && written != resp.ContentLength {
+		return fmt.Errorf("下载不完整: 收到 %d 字节，应为 %d 字节", written, resp.ContentLength)
+	}
+	return nil
 }

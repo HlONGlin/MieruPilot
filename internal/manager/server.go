@@ -44,6 +44,7 @@ type Server struct {
 	version   string
 	panelPath string
 	requestMu sync.RWMutex
+	cloudMu   sync.Mutex
 
 	mu       sync.Mutex
 	sessions map[string]time.Time
@@ -95,7 +96,7 @@ func New(cfg Config) (*Server, error) {
 // Handler returns the root HTTP handler.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == s.panelPath+"/api/backup/restore" {
+		if r.Method == http.MethodPost && (r.URL.Path == s.panelPath+"/api/backup/restore" || r.URL.Path == s.panelPath+"/api/backup/webdav/restore") {
 			s.requestMu.Lock()
 			defer s.requestMu.Unlock()
 		} else {
@@ -148,6 +149,12 @@ func (s *Server) routes() {
 	s.mux.Handle("GET "+p+"/api/audit", s.auth(s.handleAudit))
 	s.mux.Handle("GET "+p+"/api/backup", s.auth(s.handleBackup))
 	s.mux.Handle("POST "+p+"/api/backup/restore", s.auth(s.auditMutation(s.handleRestore)))
+	s.mux.Handle("GET "+p+"/api/backup/webdav", s.auth(s.handleCloudBackupSettings))
+	s.mux.Handle("PUT "+p+"/api/backup/webdav", s.auth(s.auditMutation(s.handleSaveCloudBackupSettings)))
+	s.mux.Handle("POST "+p+"/api/backup/webdav/test", s.auth(s.handleTestCloudBackup))
+	s.mux.Handle("GET "+p+"/api/backup/webdav/files", s.auth(s.handleListCloudBackups))
+	s.mux.Handle("POST "+p+"/api/backup/webdav/upload", s.auth(s.auditMutation(s.handleUploadCloudBackup)))
+	s.mux.Handle("POST "+p+"/api/backup/webdav/restore", s.auth(s.auditMutation(s.handleRestoreCloudBackup)))
 	s.mux.Handle("POST "+p+"/api/settings/sub-token/rotate", s.auth(s.auditMutation(s.handleRotateSubToken)))
 	s.mux.Handle("GET "+p+"/api/update/check", s.auth(s.handleCheckUpdate))
 	s.mux.Handle("POST "+p+"/api/update/apply", s.auth(s.auditMutation(s.handleApplyUpdate)))

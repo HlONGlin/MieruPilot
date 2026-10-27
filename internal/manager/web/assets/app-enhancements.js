@@ -102,13 +102,20 @@ async function testNode(nodeId) {
     const errors = result.errors || [];
     const success = result.success;
 
-    let message = `<h3>${success ? "✅ 节点可用" : "❌ 节点异常"}</h3>`;
+    let message = `<h3>${result.status === 'unknown' ? '⚠️ 连通性待验证' : success ? '✅ 端口连通检查通过' : '❌ 连通性检查失败'}</h3>`;
 
     if (result.pingLatency > 0) {
       message += `<p>⚡ Ping延迟: <strong>${result.pingLatency}ms</strong></p>`;
     }
 
-    message += `<p>🔌 TCP连通: ${result.tcpConnectable ? "✅ 可达" : "❌ 不可达"}</p>`;
+    const portResults = result.portResults || [];
+    if (portResults.some((port) => port.tcpChecked)) {
+      message += `<p>🔌 TCP连通: ${result.tcpConnectable ? "✅ 至少一个端口可达" : "❌ 不可达"}</p>`;
+    }
+    for (const port of portResults) {
+      if (port.udpStatus === 'unknown') message += `<p>端口 ${esc(port.port)}：UDP 待协议客户端验证</p>`;
+    }
+    for (const warning of result.warnings || []) message += `<p class="muted">${esc(warning)}</p>`;
 
     if (errors.length > 0) {
       message += `<div class="error"><h4>错误信息:</h4><ul>`;
@@ -143,13 +150,15 @@ async function testPort(nodeId, portId) {
     const errors = result.errors || [];
     const hasErrors = errors.length > 0;
 
-    let message = `<h3>${hasErrors ? "⚠️" : "✅"} 端口 ${result.port} 测试</h3>`;
+    let message = `<h3>${hasErrors || result.status === 'unknown' ? "⚠️" : "✅"} 端口 ${result.port} 连通性检查</h3>`;
     message += `<p><strong>代理类型:</strong> ${esc(result.proxyType)}</p>`;
-    message += `<p>🔌 TCP连通: ${result.tcpConnectable ? "✅" : "❌"}</p>`;
+    if (result.tcpChecked) message += `<p>🔌 TCP连通: ${result.tcpConnectable ? "✅" : "❌"}</p>`;
 
-    if (result.udpReachable !== undefined) {
-      message += `<p>📡 UDP可达: ${result.udpReachable ? "✅" : "❌"}</p>`;
+    if (result.udpStatus) {
+      message += `<p>📡 UDP可达性：待协议客户端验证</p>`;
     }
+    for (const warning of result.warnings || []) message += `<p class="muted">${esc(warning)}</p>`;
+    if (result.serviceStatusKnown) message += `<p>Agent 上报服务状态：${result.serviceRunning ? '运行中' : '未运行'}</p>`;
 
     if (result.tlsValid) {
       const tls = result.tlsValid;
@@ -230,6 +239,7 @@ async function viewNodeConfig(nodeId) {
       if (p.shadowtls) {
         html += `<tr><td colspan="2"><strong>ShadowTLS 配置</strong></td></tr>`;
         html += `<tr><td>握手服务器</td><td><code>${esc(p.shadowtls.handshakeAddr)}</code></td></tr>`;
+        html += `<tr><td>后端数据服务</td><td><code>${esc(p.shadowtls.backendAddr || "未配置")}</code> ${p.shadowtls.backendManaged ? "🔄 自动部署" : "✋ 手动配置"}</td></tr>`;
       }
       if (p.anytls) {
         html += `<tr><td colspan="2"><strong>AnyTLS 配置</strong></td></tr>`;

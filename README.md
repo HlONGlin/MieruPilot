@@ -8,6 +8,8 @@
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](go.mod)
 [![Release](https://img.shields.io/github/v/release/HlONGlin/UnifiedProxy)](https://github.com/HlONGlin/UnifiedProxy/releases)
 
+> **📢 v1.5.2 已发布** - 修复 5 项关键部署缺陷（含 NaïveProxy 认证错误），**强烈建议所有用户升级**。详见 [发布说明](dist/RELEASE_NOTES_v1.5.2.md) | [变更日志](CHANGELOG_v1.5.2.md)
+
 [特性](#-特性) • [快速开始](#-快速开始) • [架构](#-架构) • [使用指南](#-使用指南) • [开发](#-开发)
 
 ---
@@ -44,6 +46,27 @@
 - ✅ **AnyTLS** - 通用 TLS 代理协议
 - ✅ **ShadowTLS v3** - 将流量伪装成 TLS 的代理协议
 
+### 协议部署条件
+
+| 协议 | 监听端口 | 证书和依赖 | 客户端 |
+|------|----------|------------|--------|
+| Mieru | 1025-65535，TCP/UDP | Linux systemd、dpkg/rpm | mieru 或支持该协议的 mihomo |
+| NaïveProxy | 1-65535，TCP；自动 ACME 使用 443 | 域名正确解析；自动证书验证可达；或上传域名匹配的有效证书；自动安装仅支持 amd64 | NaïveProxy 客户端；不包含在 mihomo 订阅中 |
+| AnyTLS | 1-65535，TCP | 当前 anytls-go 服务端启动时生成临时自签名证书 | 分享链接和订阅显式跳过证书校验，不具备 CA 证书身份验证；仅使用可信节点 |
+| ShadowTLS v3 | 1-65535，TCP | TLS 握手站点；后端地址留空时由面板分配本机端口与密码，Agent 自动安装并运行 shadowsocks-rust（Agent 一键安装支持 amd64/arm64，需能访问 GitHub）；也可填写自有后端，面板不会改动 | 订阅自动带上后端的 SS 密码和加密方式；隧道不转发 UDP |
+
+配置同步仅在内容变化或服务停止时重启实例；密码、手动证书和后端地址变化会触发重新应用。部署失败会保留任务自动重试。升级后请同时替换 Manager 和 Agent，再在面板重试同步，并刷新客户端订阅。自动部署的 ShadowTLS 后端需要新版 Agent，旧版 Agent 不会启动后端，ShadowTLS 将无法转发流量。
+
+### 部署能力与验收边界
+
+- 流量统计、月度限额及面板出站规则目前仅支持 **Mieru**。NaïveProxy、AnyTLS、ShadowTLS 不提供这些能力；API 拒绝其正数限额和显式指向这些端口的启用出站规则。“全部 Mieru 端口”也不影响其他协议。
+- 节点检测仅检查已启用端口的连通性和 NaïveProxy 证书，不把 SSH/80 端口当作前提，也不验证代理认证或目标转发。Mieru UDP 标记为“待协议客户端验证”，不会因 TCP 不通误报失败。服务状态来自最近的 Agent 上报。
+- Agent 只认可 systemd 实际使用的固定路径；NaïveProxy 还检查 `http.handlers.forward_proxy` 模块，普通 Caddy 或其他 PATH 路径不算已安装。
+- AnyTLS 使用通配监听。ShadowTLS 仅在 IPv6 可用且 Linux `net.ipv6.bindv6only=0` 时使用 `[::]`，其他情况下保留 IPv4；IPv6 公网连通性仍需现场验收。
+- ShadowTLS 托管后端的 TCP 端口在新增、修改和备份恢复时校验冲突；相同数字的 Mieru UDP 监听不占用该 TCP 端口。独立 `shadowtls://` 链接不含后端 SS 凭据，建议使用完整 mihomo 订阅。
+- NaïveProxy 和 shadowsocks-rust 的 `tar.xz` 归档需要 `tar` 及 xz 解压能力（Debian/Ubuntu：`apt install tar xz-utils`；RPM 系：`yum install tar xz`）。Agent 一键安装整体只支持 amd64/arm64；NaïveProxy 自动下载只支持 amd64。其他架构手动编译需遵循固定 forwardproxy 版本的 `CADDY_VERSION` 和 Caddy 补丁，不能直接使用普通 Caddy 加插件的构建命令。
+- 本地测试、上游认证链路与交叉编译通过不等于 VPS 已验收；Linux systemd 生命周期、ACME 签发/续期及各协议公网客户端请求需在目标节点验证。修复记录见 [部署复核与修复记录](docs/PROTOCOL_DEPLOYMENT_AUDIT_2026-10-27.md)。
+
 ### 核心理念
 
 - **一个端口号** → 选择协议类型，自动生成配置、分享链接、Clash 订阅
@@ -54,13 +77,19 @@
 
 ## ✨ 特性
 
+### ☁️ WebDAV 云备份
+- 将本项目的节点配置备份到已有 WebDAV 云盘
+- 系统设置中保存云盘地址与凭据，支持连接测试、手动备份、历史列表与恢复
+- 上传后下载校验；恢复前创建本地备份，并保留当前管理员和管理地址
+- 详见 [WebDAV 云备份指南](docs/WEBDAV_BACKUP.md)
+
 ### 🔄 多协议支持 `NEW`
 - **Mieru**：原生 UDP 协议，适合游戏和视频
 - **NaïveProxy**：伪装为 HTTPS，基于 Chrome 网络栈
 - **AnyTLS**：通用 TLS 代理
 - **ShadowTLS v3**：Shadowsocks over TLS 隧道
 - 一个节点支持多种代理类型同时运行
-- Clash 订阅自动包含所有代理类型
+- Clash / mihomo 订阅包含可表示的代理类型；NaïveProxy 使用专用客户端，ShadowTLS 需要后端凭据
 - 详见 [多协议使用指南](docs/QUICK_START_MULTI_PROXY.md)
 
 ### 🔐 增强的证书管理 `v1.3.0`
@@ -71,8 +100,8 @@
 - 详见 [增强功能文档](docs/ENHANCED_FEATURES.md)
 
 ### 🔍 节点测试功能 `v1.3.0`
-- **网络测试**：ICMP Ping 测试节点连通性
-- **端口测试**：TCP 连接测试所有配置端口
+- **网络测试**：检测已启用的实际监听端口，不依赖 SSH/80
+- **端口测试**：TCP 端口检查连通性；Mieru UDP 明确标记待客户端验证
 - **详细报告**：测试结果包含延迟、状态和建议
 - **故障排查**：快速定位网络、端口、服务问题
 - 详见 [节点测试指南](docs/ENHANCED_FEATURES.md#2-节点测试功能)
@@ -95,8 +124,8 @@
 - 配置实时下发到节点
 
 ### 📊 流量管理
-- **流量统计**：实时监控每个端口的流量使用
-- **流量限制**：设置每个端口的月度流量配额
+- **流量统计**：实时监控 Mieru 端口的流量使用
+- **流量限制**：设置 Mieru 端口的月度流量配额
 - **带宽控制**：预留配置项，当前 mita 不支持可靠的服务端速率限制，暂不生效
 - **自动重置**：流量按月自动归零
 
@@ -273,7 +302,7 @@ Agent 会自动：
 ### 4. 配置端口
 
 1. 节点上线后，点击节点进入详情页
-2. 填写端口号（1025-65535）
+2. 填写端口号（Mieru 为 1025-65535；其他协议为 1-65535）
 3. 选择协议（TCP/UDP）
 4. 点击「一键生成」
 
@@ -508,6 +537,8 @@ http://你的服务器:3000/panel/随机字符/sub?token=订阅令牌
 
 ## 📊 流量管理
 
+当前仅 Mieru 支持真实流量统计与月度配额；其他协议显示“暂不支持流量统计”，不提供限额设置。
+
 ### 设置流量限制
 
 1. 进入节点详情页
@@ -532,7 +563,7 @@ http://你的服务器:3000/panel/随机字符/sub?token=订阅令牌
 
 ### Agent 流量上报
 
-Agent 定期上报每个端口的流量使用情况，Manager 汇总并持久化。
+Agent 定期上报 Mieru 端口的流量使用情况，Manager 汇总并持久化。
 
 ---
 

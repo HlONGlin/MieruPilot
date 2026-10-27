@@ -51,6 +51,7 @@ func (s *Store) Export() ([]byte, error) {
 	defer s.mu.RUnlock()
 	copyData := s.data
 	copyData.Tasks = nil
+	copyData.CloudBackup = nil // Never send the cloud destination's credentials to itself.
 	if copyData.Nodes == nil {
 		copyData.Nodes = []*model.Node{}
 	}
@@ -78,7 +79,7 @@ func (s *Store) Restore(raw []byte) error {
 		ports := make(map[int]bool)
 		portIDs := make(map[string]bool)
 		for _, p := range n.Ports {
-			if p == nil || p.ID == "" || p.Port < 1025 || p.Port > 65535 || ports[p.Port] || portIDs[p.ID] {
+			if p == nil || p.ID == "" || p.Port < model.MinListenPort(p.ProxyType) || p.Port > 65535 || ports[p.Port] || portIDs[p.ID] {
 				return fmt.Errorf("备份端口无效或重复")
 			}
 			ports[p.Port] = true
@@ -89,6 +90,9 @@ func (s *Store) Restore(raw []byte) error {
 			p.InstanceRunning = false
 			p.InstanceError = ""
 			p.LastSyncAttempt, p.InstanceSyncedAt = time.Time{}, time.Time{}
+		}
+		if err := model.ValidatePortReservations(n); err != nil {
+			return fmt.Errorf("备份节点 %s 端口冲突: %w", n.ID, err)
 		}
 		n.Registered, n.MitaRunning = false, false
 		n.LastSeen = time.Time{}
@@ -106,6 +110,7 @@ func (s *Store) Restore(raw []byte) error {
 		return err
 	}
 	data.Admin = previous.Admin
+	data.CloudBackup = previous.CloudBackup
 	data.Audit = previous.Audit
 	if data.Settings == nil {
 		data.Settings = &Settings{}

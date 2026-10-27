@@ -39,11 +39,12 @@ type Settings struct {
 }
 
 type persisted struct {
-	Admin    *Admin                            `json:"admin"`
-	Settings *Settings                         `json:"settings"`
-	Nodes    []*model.Node                     `json:"nodes"`
-	Tasks    map[string]map[string]*model.Task `json:"tasks,omitempty"`
-	Audit    []model.AuditEntry                `json:"audit,omitempty"`
+	CloudBackup *CloudBackupConfig                `json:"cloudBackup,omitempty"`
+	Admin       *Admin                            `json:"admin"`
+	Settings    *Settings                         `json:"settings"`
+	Nodes       []*model.Node                     `json:"nodes"`
+	Tasks       map[string]map[string]*model.Task `json:"tasks,omitempty"`
+	Audit       []model.AuditEntry                `json:"audit,omitempty"`
 }
 
 const maxAuditEntries = 500

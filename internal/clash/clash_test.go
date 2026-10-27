@@ -36,7 +36,8 @@ func TestBuildEntries(t *testing.T) {
 			wantType: model.ProxyTypeMieru,
 		},
 		{
-			name: "naive proxy",
+			// mihomo has no NaiveProxy outbound, so the port must not be emitted.
+			name: "naive proxy skipped",
 			node: &model.Node{
 				ID:      "test-node",
 				Name:    "Test Node",
@@ -53,8 +54,46 @@ func TestBuildEntries(t *testing.T) {
 					},
 				},
 			},
+			wantLen: 0,
+		},
+		{
+			name: "shadowtls without backend password skipped",
+			node: &model.Node{
+				ID:      "test-node",
+				Address: "1.2.3.4",
+				Ports: []*model.Port{
+					{
+						ID:            "port1",
+						Port:          8443,
+						Password:      "stls",
+						BackendAddr:   "127.0.0.1:8388",
+						HandshakeAddr: "cloudflare.com:443",
+						Enabled:       true,
+						ProxyType:     model.ProxyTypeShadowTLS,
+					},
+				},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "shadowtls with backend credentials",
+			node: &model.Node{
+				ID:      "test-node",
+				Address: "1.2.3.4",
+				Ports: []*model.Port{
+					{
+						ID:              "port1",
+						Port:            8443,
+						Password:        "stls",
+						BackendAddr:     "127.0.0.1:8388",
+						BackendPassword: "ss-secret",
+						Enabled:         true,
+						ProxyType:       model.ProxyTypeShadowTLS,
+					},
+				},
+			},
 			wantLen:  1,
-			wantType: model.ProxyTypeNaive,
+			wantType: model.ProxyTypeShadowTLS,
 		},
 		{
 			name: "mixed proxies",
@@ -89,7 +128,7 @@ func TestBuildEntries(t *testing.T) {
 					},
 				},
 			},
-			wantLen: 3,
+			wantLen: 2,
 		},
 		{
 			name: "disabled ports excluded",
@@ -148,6 +187,43 @@ func TestBuildEntries(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUnsupportedPorts(t *testing.T) {
+	n := &model.Node{
+		ID:      "test-node",
+		Name:    "Test Node",
+		Address: "1.2.3.4",
+		Ports: []*model.Port{
+			{ID: "p1", Port: 443, Enabled: true, ProxyType: model.ProxyTypeNaive, Domain: "example.com"},
+			{ID: "p2", Port: 8443, Enabled: true, ProxyType: model.ProxyTypeShadowTLS, Password: "stls"},
+			{ID: "p3", Port: 8444, Enabled: true, ProxyType: model.ProxyTypeShadowTLS, Password: "stls", BackendPassword: "ss"},
+			{ID: "p4", Port: 8080, Enabled: true, ProxyType: model.ProxyTypeMieru},
+			{ID: "p5", Port: 443, Enabled: false, ProxyType: model.ProxyTypeNaive},
+		},
+	}
+
+	notes := UnsupportedPorts(n)
+	if len(notes) != 2 {
+		t.Fatalf("UnsupportedPorts() got %d notes, want 2: %v", len(notes), notes)
+	}
+	if !strings.Contains(notes[0], "NaïveProxy") {
+		t.Errorf("first note should mention NaïveProxy, got %q", notes[0])
+	}
+	if !strings.Contains(notes[1], "后端 shadowsocks 密码") {
+		t.Errorf("second note should mention the missing backend password, got %q", notes[1])
+	}
+}
+
+func TestGenerateYAMLWithNotes(t *testing.T) {
+	yaml := GenerateYAMLWithNotes(nil, []string{"node-port (NaïveProxy)：mihomo 不支持该协议"})
+
+	if !strings.Contains(yaml, "# 未包含: node-port (NaïveProxy)") {
+		t.Errorf("GenerateYAMLWithNotes() missing note comment:\n%s", yaml)
+	}
+	if strings.Index(yaml, "# 未包含") > strings.Index(yaml, "mixed-port") {
+		t.Errorf("note comment must be written before the configuration body:\n%s", yaml)
 	}
 }
 
@@ -271,10 +347,11 @@ func TestRenderProxyEntry_AnyTLS(t *testing.T) {
 
 	required := []string{
 		"name: test-anytls",
-		"type: trojan",
+		"type: anytls",
 		"server: 1.2.3.4",
 		"port: 8443",
 		"password: mypassword",
+		"client-fingerprint: chrome",
 		"udp: true",
 	}
 
@@ -283,17 +360,22 @@ func TestRenderProxyEntry_AnyTLS(t *testing.T) {
 			t.Errorf("renderProxyEntry() missing: %s", r)
 		}
 	}
+	if strings.Contains(result, "type: trojan") {
+		t.Errorf("AnyTLS must not be rendered as trojan:\n%s", result)
+	}
 }
 
 func TestRenderProxyEntry_ShadowTLS(t *testing.T) {
 	entry := Entry{
-		Name:          "test-shadowtls",
-		ProxyType:     model.ProxyTypeShadowTLS,
-		Server:        "1.2.3.4",
-		Port:          8080,
-		Password:      "mypassword",
-		HandshakeAddr: "cloudflare.com:443",
-		SNI:           "example.com",
+		Name:            "test-shadowtls",
+		ProxyType:       model.ProxyTypeShadowTLS,
+		Server:          "1.2.3.4",
+		Port:            8080,
+		Password:        "stls-password",
+		HandshakeAddr:   "cloudflare.com:443",
+		SNI:             "example.com",
+		BackendPassword: "ss-secret",
+		BackendCipher:   DefaultShadowTLSBackendCipher,
 	}
 
 	result := renderProxyEntry(entry)
@@ -303,11 +385,14 @@ func TestRenderProxyEntry_ShadowTLS(t *testing.T) {
 		"type: ss",
 		"server: 1.2.3.4",
 		"port: 8080",
-		"password: mypassword",
+		// The shadowsocks layer uses the backend credentials ...
+		"password: ss-secret",
 		"cipher: aes-256-gcm",
 		"plugin: shadow-tls",
+		// ... while the ShadowTLS password belongs to the plugin.
+		"password: stls-password",
 		"version: 3",
-		"sni: example.com",
+		"host: example.com",
 	}
 
 	for _, r := range required {
@@ -320,8 +405,30 @@ func TestRenderProxyEntry_ShadowTLS(t *testing.T) {
 	if !strings.Contains(result, "plugin-opts:") {
 		t.Errorf("renderProxyEntry() missing plugin-opts section")
 	}
-	if !strings.Contains(result, "cloudflare.com:443") {
-		t.Errorf("renderProxyEntry() missing handshake address")
+	if strings.Contains(result, "cloudflare.com:443") || strings.Contains(result, "      sni:") {
+		t.Errorf("renderProxyEntry() leaked the relay address or an unsupported SNI key")
+	}
+}
+
+func TestManagedTLSSubscriptions(t *testing.T) {
+	n := &model.Node{Address: "192.0.2.1", Ports: []*model.Port{
+		{ID: "a", Port: 8443, ProxyType: model.ProxyTypeAnyTLS, Password: "anytls-secret", Enabled: true},
+		{ID: "s", Port: 9443, ProxyType: model.ProxyTypeShadowTLS, Password: "tls-secret", BackendPassword: "ss-secret", Enabled: true},
+	}}
+	entries := BuildEntries(n)
+	if len(entries) != 2 {
+		t.Fatalf("expected two entries, got %d", len(entries))
+	}
+	anyTLS := renderProxyEntry(entries[0])
+	if !strings.Contains(anyTLS, "skip-cert-verify: true") {
+		t.Fatal("managed AnyTLS uses a self-signed certificate")
+	}
+	shadowTLS := renderProxyEntry(entries[1])
+	if !strings.Contains(shadowTLS, "host: cloudflare.com\n") || strings.Contains(shadowTLS, "cloudflare.com:443") {
+		t.Fatalf("invalid default ShadowTLS SNI: %s", shadowTLS)
+	}
+	if !strings.Contains(shadowTLS, "udp: false") {
+		t.Fatal("the managed ShadowTLS tunnel cannot carry UDP datagrams")
 	}
 }
 

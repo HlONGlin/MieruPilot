@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"merit/internal/clash"
 	"merit/internal/mieru"
 	"merit/internal/model"
+	"merit/internal/proxy"
 	"merit/internal/updater"
 )
 
@@ -163,6 +165,15 @@ func (s *Server) handlePutEgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, err := s.store.Update(r.PathValue("id"), func(n *model.Node) error {
+		for _, rule := range cfg.Rules {
+			for _, portNumber := range rule.Ports {
+				for _, port := range n.Ports {
+					if rule.Enabled && port.Port == portNumber && model.NormalizeProxyType(port.ProxyType) != model.ProxyTypeMieru {
+						return &portValidationError{fmt.Errorf("出站规则仅支持 Mieru 端口，%d 使用 %s", portNumber, port.ProxyType)}
+					}
+				}
+			}
+		}
 		if len(cfg.Proxies) == 0 && len(cfg.Rules) == 0 {
 			n.Egress = nil
 		} else {
@@ -184,6 +195,11 @@ func (s *Server) handlePutEgress(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
+		var invalid *portValidationError
+		if errors.As(err, &invalid) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		return
 	}
@@ -449,22 +465,21 @@ func (s *Server) deleteNodeRecord(w http.ResponseWriter, id string) {
 
 func (s *Server) handleAddPort(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Port          int    `json:"port"`
-		Protocol      string `json:"protocol"`
-		ProxyType     string `json:"proxyType"`
-		Label         string `json:"label"`
-		Domain        string `json:"domain"`
-		AutoACME      bool   `json:"autoACME"`
-		TLSCert       string `json:"tlsCert"`
-		TLSKey        string `json:"tlsKey"`
-		HandshakeAddr string `json:"handshakeAddr"`
+		Port            int    `json:"port"`
+		Protocol        string `json:"protocol"`
+		ProxyType       string `json:"proxyType"`
+		Label           string `json:"label"`
+		Domain          string `json:"domain"`
+		AutoACME        bool   `json:"autoACME"`
+		TLSCert         string `json:"tlsCert"`
+		TLSKey          string `json:"tlsKey"`
+		HandshakeAddr   string `json:"handshakeAddr"`
+		BackendAddr     string `json:"backendAddr"`
+		BackendPassword string `json:"backendPassword"`
+		BackendCipher   string `json:"backendCipher"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求无效"})
-		return
-	}
-	if req.Port < 1025 || req.Port > 65535 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "端口需在 1025-65535 之间"})
 		return
 	}
 	proto := strings.ToUpper(strings.TrimSpace(req.Protocol))
@@ -489,6 +504,14 @@ func (s *Server) handleAddPort(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "不支持的代理类型"})
 		return
 	}
+	if minPort := model.MinListenPort(proxyType); req.Port < minPort || req.Port > 65535 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("端口需在 %d-65535 之间", minPort)})
+		return
+	}
+	if proxyType != model.ProxyTypeMieru && proto != model.ProtocolTCP {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "该代理类型仅支持 TCP 监听"})
+		return
+	}
 
 	var added *model.Port
 	n, err := s.store.Update(r.PathValue("id"), func(n *model.Node) error {
@@ -501,27 +524,51 @@ func (s *Server) handleAddPort(w http.ResponseWriter, r *http.Request) {
 		p := mieru.NewPortWithType(req.Port, proto, strings.TrimSpace(req.Label), proxyType)
 
 		// 设置代理特定配置
-		if proxyType == model.ProxyTypeNaive {
+		switch proxyType {
+		case model.ProxyTypeNaive:
 			p.Domain = strings.TrimSpace(req.Domain)
 			p.AutoACME = req.AutoACME
 			if !req.AutoACME {
 				p.TLSCert = strings.TrimSpace(req.TLSCert)
 				p.TLSKey = strings.TrimSpace(req.TLSKey)
 			}
-		} else if proxyType == model.ProxyTypeShadowTLS {
+			if req.AutoACME {
+				p.TLSCert, p.TLSKey = "", ""
+			}
+		case model.ProxyTypeShadowTLS:
 			p.HandshakeAddr = strings.TrimSpace(req.HandshakeAddr)
 			if p.HandshakeAddr == "" {
 				p.HandshakeAddr = "cloudflare.com:443"
 			}
+			p.BackendAddr = strings.TrimSpace(req.BackendAddr)
+			p.BackendPassword = strings.TrimSpace(req.BackendPassword)
+			p.BackendCipher = strings.TrimSpace(req.BackendCipher)
+			// 后端地址留空时由 Manager 分配本机后端并生成凭据
+			if err := finalizeShadowTLSBackend(n, p, false, "", true, p.BackendPassword != ""); err != nil {
+				return &portValidationError{err}
+			}
+		}
+
+		// 部署前先校验，避免把必然起不来的实例下发到节点
+		if err := validateDeployablePort(p); err != nil {
+			return &portValidationError{err}
 		}
 
 		n.Ports = append(n.Ports, p)
+		if err := model.ValidatePortReservations(n); err != nil {
+			return &portValidationError{err}
+		}
 		added = p
 		return nil
 	})
 	if err != nil {
 		if err == errConflict {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "该端口已存在"})
+			return
+		}
+		var invalid *portValidationError
+		if errors.As(err, &invalid) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": invalid.Error()})
 			return
 		}
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
@@ -537,6 +584,13 @@ type simpleError struct{ msg string }
 
 func (e *simpleError) Error() string { return e.msg }
 
+// portValidationError marks a port configuration that cannot be deployed, so the
+// handler can answer 400 instead of 404.
+type portValidationError struct{ err error }
+
+func (e *portValidationError) Error() string { return e.err.Error() }
+func (e *portValidationError) Unwrap() error { return e.err }
+
 func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled        *bool   `json:"enabled"`
@@ -546,9 +600,14 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 		BandwidthLimit *int64  `json:"bandwidthLimit"`
 		ResetTraffic   bool    `json:"resetTraffic"`
 		// 新增字段用于更新代理配置
-		Domain        *string `json:"domain"`
-		AutoACME      *bool   `json:"autoACME"`
-		HandshakeAddr *string `json:"handshakeAddr"`
+		Domain          *string `json:"domain"`
+		TLSCert         *string `json:"tlsCert"`
+		TLSKey          *string `json:"tlsKey"`
+		AutoACME        *bool   `json:"autoACME"`
+		HandshakeAddr   *string `json:"handshakeAddr"`
+		BackendAddr     *string `json:"backendAddr"`
+		BackendPassword *string `json:"backendPassword"`
+		BackendCipher   *string `json:"backendCipher"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请求无效"})
@@ -558,6 +617,10 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 		p := n.FindPort(r.PathValue("pid"))
 		if p == nil {
 			return errNodeNotFound
+		}
+		wasManaged, prevAddr := p.BackendManaged, p.BackendAddr
+		if model.NormalizeProxyType(p.ProxyType) != model.ProxyTypeMieru && req.TrafficLimit != nil && *req.TrafficLimit > 0 {
+			return &portValidationError{fmt.Errorf("当前仅 Mieru 支持流量统计和月度限额，%s 尚不支持", p.ProxyType)}
 		}
 		if req.Enabled != nil {
 			p.Enabled = *req.Enabled
@@ -588,7 +651,7 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 			p.AutoDisabled = false
 			p.Enabled = true
 		}
-		if p.TrafficLimit > 0 && p.TrafficUsed >= p.TrafficLimit && p.Enabled {
+		if model.NormalizeProxyType(p.ProxyType) == model.ProxyTypeMieru && p.TrafficLimit > 0 && p.TrafficUsed >= p.TrafficLimit && p.Enabled {
 			p.Enabled = false
 			p.AutoDisabled = true
 		}
@@ -597,16 +660,50 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 		if req.Domain != nil {
 			p.Domain = strings.TrimSpace(*req.Domain)
 		}
+		if req.TLSCert != nil {
+			p.TLSCert = strings.TrimSpace(*req.TLSCert)
+		}
+		if req.TLSKey != nil {
+			p.TLSKey = strings.TrimSpace(*req.TLSKey)
+		}
 		if req.AutoACME != nil {
 			p.AutoACME = *req.AutoACME
 		}
 		if req.HandshakeAddr != nil {
 			p.HandshakeAddr = strings.TrimSpace(*req.HandshakeAddr)
 		}
+		if req.BackendAddr != nil {
+			p.BackendAddr = strings.TrimSpace(*req.BackendAddr)
+		}
+		if req.BackendPassword != nil {
+			p.BackendPassword = strings.TrimSpace(*req.BackendPassword)
+		}
+		if req.BackendCipher != nil {
+			p.BackendCipher = strings.TrimSpace(*req.BackendCipher)
+		}
+		if p.AutoACME {
+			// 自动证书模式下不保留手动证书，避免节点上的旧文件继续被引用
+			p.TLSCert, p.TLSKey = "", ""
+		}
+		credsGiven := req.BackendPassword != nil && strings.TrimSpace(*req.BackendPassword) != ""
+		if err := finalizeShadowTLSBackend(n, p, wasManaged, prevAddr, req.BackendAddr != nil, credsGiven); err != nil {
+			return &portValidationError{err}
+		}
+		if err := model.ValidatePortReservations(n); err != nil {
+			return &portValidationError{err}
+		}
+		if err := validateDeployablePort(p); err != nil {
+			return &portValidationError{err}
+		}
 
 		return nil
 	})
 	if err != nil {
+		var invalid *portValidationError
+		if errors.As(err, &invalid) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": invalid.Error()})
+			return
+		}
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		return
 	}
@@ -674,6 +771,9 @@ func (s *Server) handleUploadCert(w http.ResponseWriter, r *http.Request) {
 		p.TLSCert = req.Cert
 		p.TLSKey = req.Key
 		p.AutoACME = req.AutoACME
+		if err := validateDeployablePort(p); err != nil {
+			return err
+		}
 
 		return nil
 	})
@@ -713,14 +813,14 @@ func (s *Server) handleGetProxyTypes(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			"type":        model.ProxyTypeAnyTLS,
-			"name":        "AnyTLS",
-			"description": "轻量级TLS混淆代理",
+			"name":        "AnyTLS（自签名证书）",
+			"description": "anytls-go 使用临时自签名证书，导出配置跳过证书校验",
 			"icon":        "🔐",
 		},
 		{
 			"type":        model.ProxyTypeShadowTLS,
 			"name":        "ShadowTLS v3",
-			"description": "TLS流量伪装代理，需要握手服务器",
+			"description": "TCP 隧道，需要握手服务器和独立部署的后端数据服务",
 			"icon":        "🔒",
 		},
 	}
@@ -840,36 +940,13 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// generateProxyLink 为不同代理类型生成分享链接
+// generateProxyLink 为不同代理类型生成分享链接。非 mieru 协议统一交给 proxy 包，
+// 避免 Manager 与 Agent 两侧各写一份拼接逻辑（转义不一致会导致链接不可用）。
 func (s *Server) generateProxyLink(n *model.Node, p *model.Port) string {
-	proxyType := p.ProxyType
-	if proxyType == "" {
-		proxyType = model.ProxyTypeMieru
-	}
-
-	switch proxyType {
-	case model.ProxyTypeNaive:
-		domain := p.Domain
-		if domain == "" {
-			domain = mieru.ClientHost(n)
-		}
-		return fmt.Sprintf("naive+https://%s:%s@%s:%d", p.Username, p.Password, domain, p.Port)
-
-	case model.ProxyTypeAnyTLS:
-		host := mieru.ClientHost(n)
-		return fmt.Sprintf("anytls://%s@%s:%d", p.Password, host, p.Port)
-
-	case model.ProxyTypeShadowTLS:
-		host := mieru.ClientHost(n)
-		handshake := p.HandshakeAddr
-		if handshake == "" {
-			handshake = "cloudflare.com:443"
-		}
-		return fmt.Sprintf("shadowtls://%s@%s:%d?handshake=%s", p.Password, host, p.Port, handshake)
-
-	default:
+	if model.NormalizeProxyType(p.ProxyType) == model.ProxyTypeMieru {
 		return mieru.SimpleLink(n, p)
 	}
+	return proxy.GenerateShareLink(n, p)
 }
 
 func (s *Server) handleNodeClash(w http.ResponseWriter, r *http.Request) {
@@ -878,7 +955,7 @@ func (s *Server) handleNodeClash(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
 		return
 	}
-	yaml := clash.GenerateYAML(clash.BuildEntries(n))
+	yaml := clash.GenerateYAMLWithNotes(clash.BuildEntries(n), clash.UnsupportedPorts(n))
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	_, _ = w.Write([]byte(yaml))
 }
@@ -909,12 +986,14 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var entries []clash.Entry
+	var notes []string
 	for _, n := range s.store.Nodes() {
 		entries = append(entries, clash.BuildEntries(n)...)
+		notes = append(notes, clash.UnsupportedPorts(n)...)
 	}
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	w.Header().Set("Subscription-Userinfo", "upload=0; download=0; total=0; expire=0")
-	_, _ = w.Write([]byte(clash.GenerateYAML(entries)))
+	_, _ = w.Write([]byte(clash.GenerateYAMLWithNotes(entries, notes)))
 }
 
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
@@ -1201,6 +1280,28 @@ type CertInfo struct {
 }
 
 // validateCertAndKey 验证证书和密钥的有效性
+// All certificate entry points use the same deployment checks, including PATCH.
+func validateDeployablePort(p *model.Port) error {
+	if err := proxy.ValidatePort(p); err != nil {
+		return err
+	}
+	if model.NormalizeProxyType(p.ProxyType) != model.ProxyTypeNaive || p.AutoACME {
+		return nil
+	}
+	if err := validateCertAndKey(p.TLSCert, p.TLSKey); err != nil {
+		return err
+	}
+	block, _ := pem.Decode([]byte(p.TLSCert))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return err
+	}
+	if err := cert.VerifyHostname(p.Domain); err != nil {
+		return fmt.Errorf("证书与域名不匹配: %w", err)
+	}
+	return nil
+}
+
 func validateCertAndKey(certPEM, keyPEM string) error {
 	// 解析证书
 	certBlock, _ := pem.Decode([]byte(certPEM))

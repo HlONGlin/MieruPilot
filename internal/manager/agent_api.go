@@ -155,6 +155,11 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": true})
 		return
 	}
+	// Older agents may report overall success despite a failed port deployment.
+	if rt.pending[res.TaskID].Kind == model.TaskSync && hasRetryablePortFailure(res) {
+		res.OK = false
+		res.Message = "部分端口同步失败，将自动重试"
+	}
 	if task := rt.pending[res.TaskID]; task != nil && task.Kind == model.TaskTestEgress {
 		proxyID := task.TestProxy.ID
 		if result := rt.tests[proxyID]; result != nil && result.TaskID == res.TaskID {
@@ -274,7 +279,7 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 // updatePortTraffic folds mita's process-local monotonically increasing metric
 // into the manager's persistent counter. A decrease means mita restarted.
 func updatePortTraffic(p *model.Port, raw int64, now time.Time) bool {
-	if raw <= 0 {
+	if model.NormalizeProxyType(p.ProxyType) != model.ProxyTypeMieru || raw <= 0 {
 		return false
 	}
 	changed := false

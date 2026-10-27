@@ -3,43 +3,52 @@ package agent
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
+	"strings"
+
+	"merit/internal/proxy/naive"
 )
 
-// ensureNaive installs NaïveProxy (Caddy with forwardproxy) when not present.
+// ensureNaive installs the NaïveProxy server (Caddy + klzgrad forwardproxy) when
+// it is not present yet.
 func (a *Agent) ensureNaive() (bool, error) {
 	if a.naiveInstalled() {
 		return true, nil
 	}
-	fmt.Println("未检测到 NaïveProxy，开始自动安装...")
+	fmt.Println("未检测到 NaïveProxy（Caddy forwardproxy），开始自动安装...")
 
-	// NaïveProxy is implemented as Caddy with forwardproxy plugin
-	// We need to download the prebuilt binary or build from source
-	url, err := a.naiveDownloadURL()
+	url, filename, err := naive.DownloadURL(runtimeArch())
 	if err != nil {
 		return false, err
 	}
+	url = mirrorURL(a.cfg.MitaMirror, url)
 
-	dest := filepath.Join(os.TempDir(), "caddy-naive")
-	if err := download(url, dest); err != nil {
+	archive := filepath.Join(os.TempDir(), filename)
+	if err := download(url, archive); err != nil {
 		return false, fmt.Errorf("下载 NaïveProxy 失败: %w", err)
 	}
-	defer os.Remove(dest)
+	defer os.Remove(archive)
 
-	// Install to /usr/local/bin
-	targetPath := "/usr/local/bin/caddy-naive"
-	if err := os.Rename(dest, targetPath); err != nil {
-		return false, fmt.Errorf("安装失败: %w", err)
+	workDir, err := os.MkdirTemp("", "merit-naive-*")
+	if err != nil {
+		return false, fmt.Errorf("创建临时目录失败: %w", err)
 	}
+	defer os.RemoveAll(workDir)
 
-	if err := os.Chmod(targetPath, 0755); err != nil {
-		return false, fmt.Errorf("设置权限失败: %w", err)
+	if err := extractArchive(archive, workDir); err != nil {
+		return false, fmt.Errorf("解压 NaïveProxy 失败: %w", err)
 	}
-
-	// Create config directory
-	if err := os.MkdirAll("/etc/merit/naive", 0755); err != nil {
+	binary, err := findBinary(workDir, naive.BinaryName)
+	if err != nil {
+		return false, err
+	}
+	if err := installExecutable(binary, naive.BinaryPath); err != nil {
+		return false, fmt.Errorf("安装 NaïveProxy 失败: %w", err)
+	}
+	if !a.naiveInstalled() {
+		return false, fmt.Errorf("%s 无法运行或缺少 http.handlers.forward_proxy 模块", naive.BinaryPath)
+	}
+	if err := os.MkdirAll(naive.ConfigDir, 0o750); err != nil {
 		return false, fmt.Errorf("创建配置目录失败: %w", err)
 	}
 
@@ -48,35 +57,21 @@ func (a *Agent) ensureNaive() (bool, error) {
 }
 
 func (a *Agent) naiveInstalled() bool {
-	_, err := exec.LookPath("caddy-naive")
-	if err == nil {
-		return true
-	}
-	_, err = os.Stat("/usr/local/bin/caddy-naive")
-	return err == nil
+	return a.naiveInstalledAt(naive.BinaryPath)
 }
 
-func (a *Agent) naiveDownloadURL() (string, error) {
-	// Caddy with forwardproxy builds are available from various sources
-	// For simplicity, use a known build or instruct users to build manually
-	arch := runtime.GOARCH
-	var archStr string
-	switch arch {
-	case "amd64":
-		archStr = "amd64"
-	case "arm64":
-		archStr = "arm64"
-	default:
-		return "", fmt.Errorf("不支持的架构: %s", arch)
+func (a *Agent) naiveInstalledAt(path string) bool {
+	if !executableInstalled(path) {
+		return false
 	}
-
-	// Use xcaddy or pre-built binaries
-	// TODO: This URL should point to actual NaïveProxy/Caddy builds
-	url := fmt.Sprintf("https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_%s", archStr)
-
-	if a.cfg.MitaMirror != "" {
-		url = a.cfg.MitaMirror + "/" + url
+	modules, err := a.run(path, "list-modules")
+	if err != nil {
+		return false
 	}
-
-	return url, nil
+	for _, module := range strings.Fields(modules) {
+		if module == "http.handlers.forward_proxy" {
+			return true
+		}
+	}
+	return false
 }

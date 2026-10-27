@@ -678,6 +678,9 @@
       .modal h3 { font-size: 19px; }
       .modal-foot { padding-top: 16px; border-top: 1px solid var(--line); }
       .modal-error { color: var(--red); font-size: 13px; margin-top: 12px; overflow-wrap: anywhere; }
+      .modal .field label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
+      .modal .field input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; padding: 0; margin: 0; flex-shrink: 0; accent-color: var(--primary); }
+      .modal .field textarea { width: 100%; max-width: 100%; min-width: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); resize: vertical; }
       .toast { max-width: min(640px, calc(100vw - 32px)); text-align: center; }
       @media (max-width: 800px) {
         .sidebar {

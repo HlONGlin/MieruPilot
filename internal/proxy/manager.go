@@ -2,8 +2,6 @@
 package proxy
 
 import (
-	"fmt"
-
 	"merit/internal/model"
 	"merit/internal/proxy/anytls"
 	"merit/internal/proxy/naive"
@@ -30,75 +28,52 @@ type ShareLinkParams struct {
 
 // GenerateShareLink generates a share link for the given proxy type.
 func (m *Manager) GenerateShareLink(proxyType string, params ShareLinkParams) string {
-	switch proxyType {
-	case model.ProxyTypeNaive:
-		domain := params.Domain
-		if domain == "" {
-			domain = params.Host
-		}
-		return fmt.Sprintf("naive+https://%s:%s@%s:%d", params.Username, params.Password, domain, params.Port)
-
-	case model.ProxyTypeAnyTLS:
-		return fmt.Sprintf("anytls://%s@%s:%d", params.Password, params.Host, params.Port)
-
-	case model.ProxyTypeShadowTLS:
-		handshake := params.HandshakeAddr
-		if handshake == "" {
-			handshake = "cloudflare.com:443"
-		}
-		return fmt.Sprintf("shadowtls://%s@%s:%d?handshake=%s", params.Password, params.Host, params.Port, handshake)
-
-	default:
-		return ""
+	port := &model.Port{
+		ProxyType:     proxyType,
+		Port:          params.Port,
+		Username:      params.Username,
+		Password:      params.Password,
+		Domain:        params.Domain,
+		HandshakeAddr: params.HandshakeAddr,
 	}
+	node := &model.Node{Address: params.Host}
+	return GenerateShareLink(node, port)
 }
 
 // GetProxyType returns the proxy type for a port, defaulting to mieru for backward compatibility.
 func GetProxyType(p *model.Port) string {
-	if p.ProxyType == "" {
-		return model.ProxyTypeMieru
-	}
-	return p.ProxyType
+	return model.NormalizeProxyType(p.ProxyType)
 }
 
-// GenerateShareLink generates a share link for the given proxy type.
+// GenerateShareLink generates a share link for the given node and port. NaïveProxy
+// needs both the username and the password, AnyTLS and ShadowTLS only the
+// password, so each protocol renders its own URI with proper escaping.
 func GenerateShareLink(n *model.Node, p *model.Port) string {
-	proxyType := GetProxyType(p)
-
-	switch proxyType {
+	switch GetProxyType(p) {
 	case model.ProxyTypeNaive:
 		return naive.SimpleLink(n, p)
 	case model.ProxyTypeAnyTLS:
 		return anytls.SimpleLink(n, p)
 	case model.ProxyTypeShadowTLS:
 		return shadowtls.SimpleLink(n, p)
-	case model.ProxyTypeMieru:
-		// Import would cause circular dependency, handle in mieru package
-		return ""
 	default:
+		// mieru links are built by the mieru package to avoid a cycle.
 		return ""
 	}
 }
 
 // ValidatePort validates port configuration based on proxy type.
 func ValidatePort(p *model.Port) error {
-	proxyType := GetProxyType(p)
-
-	switch proxyType {
+	switch GetProxyType(p) {
 	case model.ProxyTypeNaive:
-		if p.Domain == "" && !p.AutoACME {
-			return fmt.Errorf("NaïveProxy requires domain for TLS certificate")
-		}
-		if !p.AutoACME && (p.TLSCert == "" || p.TLSKey == "") {
-			return fmt.Errorf("NaïveProxy requires TLS certificate when AutoACME is disabled")
-		}
+		return naive.Validate(p)
+	case model.ProxyTypeAnyTLS:
+		return anytls.Validate(p)
 	case model.ProxyTypeShadowTLS:
-		if p.HandshakeAddr == "" {
-			return fmt.Errorf("ShadowTLS requires handshake server address")
-		}
+		return shadowtls.Validate(p)
+	default:
+		return nil
 	}
-
-	return nil
 }
 
 // SupportedProxyTypes returns a list of all supported proxy types.

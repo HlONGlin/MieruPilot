@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,34 +17,44 @@ import (
 
 // TestResult 节点测试结果
 type TestResult struct {
-	Success       bool              `json:"success"`
-	Timestamp     time.Time         `json:"timestamp"`
-	PingLatency   int64             `json:"pingLatency"`   // 毫秒
-	TCPConnectable bool             `json:"tcpConnectable"` // TCP 端口连通性
-	HTTPSConnectable bool           `json:"httpsConnectable"` // HTTPS 可访问性（针对NaïveProxy）
-	ProxyTest     *ProxyTestResult  `json:"proxyTest,omitempty"` // 代理功能测试
-	Errors        []string          `json:"errors,omitempty"`
-	Details       map[string]string `json:"details,omitempty"`
+	Status           string            `json:"status"`
+	Warnings         []string          `json:"warnings,omitempty"`
+	PortResults      []*PortTestResult `json:"portResults,omitempty"`
+	ProtocolVerified bool              `json:"protocolVerified"`
+	Success          bool              `json:"success"`
+	Timestamp        time.Time         `json:"timestamp"`
+	PingLatency      int64             `json:"pingLatency"`         // 毫秒
+	TCPConnectable   bool              `json:"tcpConnectable"`      // TCP 端口连通性
+	HTTPSConnectable bool              `json:"httpsConnectable"`    // HTTPS 可访问性（针对NaïveProxy）
+	ProxyTest        *ProxyTestResult  `json:"proxyTest,omitempty"` // 代理功能测试
+	Errors           []string          `json:"errors,omitempty"`
+	Details          map[string]string `json:"details,omitempty"`
 }
 
 // ProxyTestResult 代理功能测试结果
 type ProxyTestResult struct {
-	Reachable bool   `json:"reachable"` // 是否可达
+	Reachable bool   `json:"reachable"`        // 是否可达
 	ExitIP    string `json:"exitIP,omitempty"` // 出口IP
-	Latency   int64  `json:"latency"` // 延迟ms
+	Latency   int64  `json:"latency"`          // 延迟ms
 	Error     string `json:"error,omitempty"`
 }
 
 // PortTestResult 端口详细测试结果
 type PortTestResult struct {
-	PortID        string            `json:"portId"`
-	Port          int               `json:"port"`
-	ProxyType     string            `json:"proxyType"`
-	TCPConnectable bool             `json:"tcpConnectable"`
-	UDPReachable   bool             `json:"udpReachable,omitempty"`
-	TLSValid       *TLSTestResult   `json:"tlsValid,omitempty"` // TLS证书验证（NaïveProxy）
-	ServiceRunning bool             `json:"serviceRunning"` // 服务是否运行
-	Errors        []string          `json:"errors,omitempty"`
+	Status             string         `json:"status"`
+	TCPChecked         bool           `json:"tcpChecked"`
+	UDPStatus          string         `json:"udpStatus,omitempty"`
+	Warnings           []string       `json:"warnings,omitempty"`
+	ProtocolVerified   bool           `json:"protocolVerified"`
+	ServiceStatusKnown bool           `json:"serviceStatusKnown"`
+	PortID             string         `json:"portId"`
+	Port               int            `json:"port"`
+	ProxyType          string         `json:"proxyType"`
+	TCPConnectable     bool           `json:"tcpConnectable"`
+	UDPReachable       bool           `json:"udpReachable,omitempty"`
+	TLSValid           *TLSTestResult `json:"tlsValid,omitempty"` // TLS证书验证（NaïveProxy）
+	ServiceRunning     bool           `json:"serviceRunning"`     // 服务是否运行
+	Errors             []string       `json:"errors,omitempty"`
 }
 
 // TLSTestResult TLS证书测试
@@ -60,6 +71,7 @@ type TLSTestResult struct {
 // TestNode 测试节点连通性和可用性
 func (s *Server) TestNode(ctx context.Context, node *model.Node) *TestResult {
 	result := &TestResult{
+		Status:    "failed",
 		Timestamp: time.Now(),
 		Details:   make(map[string]string),
 		Errors:    []string{},
@@ -70,24 +82,18 @@ func (s *Server) TestNode(ctx context.Context, node *model.Node) *TestResult {
 		return result
 	}
 
-	// 1. Ping测试（ICMP或TCP SYN）
-	pingStart := time.Now()
-	if err := s.pingTest(ctx, node.Address); err == nil {
-		result.PingLatency = time.Since(pingStart).Milliseconds()
-		result.Details["ping"] = fmt.Sprintf("%dms", result.PingLatency)
-	} else {
-		result.Errors = append(result.Errors, fmt.Sprintf("Ping失败: %v", err))
-	}
-
-	// 2. 测试启用的端口
+	// Test configured listeners, not unrelated SSH/HTTP ports.
 	enabledPorts := 0
+	unknown := false
 	for _, p := range node.Ports {
 		if p.Enabled {
 			enabledPorts++
-			// 测试TCP连通性
-			if s.testTCPPort(ctx, node.Address, p.Port) {
-				result.TCPConnectable = true
-			}
+			portResult := s.TestPort(ctx, node, p)
+			result.PortResults = append(result.PortResults, portResult)
+			result.TCPConnectable = result.TCPConnectable || portResult.TCPConnectable
+			result.Errors = append(result.Errors, portResult.Errors...)
+			result.Warnings = append(result.Warnings, portResult.Warnings...)
+			unknown = unknown || portResult.Status == "unknown"
 		}
 	}
 
@@ -95,13 +101,22 @@ func (s *Server) TestNode(ctx context.Context, node *model.Node) *TestResult {
 		result.Errors = append(result.Errors, "无启用的端口")
 	}
 
-	result.Success = len(result.Errors) == 0 && result.TCPConnectable
+	result.Status = "reachable"
+	if unknown {
+		result.Status = "unknown"
+	}
+	if len(result.Errors) > 0 {
+		result.Status = "failed"
+	}
+	result.Success = result.Status == "reachable"
+	result.Details["scope"] = "仅检测监听端口和证书；未验证代理认证及目标转发"
 	return result
 }
 
 // TestPort 测试特定端口的可用性
 func (s *Server) TestPort(ctx context.Context, node *model.Node, port *model.Port) *PortTestResult {
 	result := &PortTestResult{
+		Status:    "failed",
 		PortID:    port.ID,
 		Port:      port.Port,
 		ProxyType: port.ProxyType,
@@ -113,18 +128,39 @@ func (s *Server) TestPort(ctx context.Context, node *model.Node, port *model.Por
 		return result
 	}
 
-	// 1. TCP连通性测试
+	if !port.Enabled {
+		result.Errors = append(result.Errors, "端口已停用")
+		return result
+	}
+	result.Warnings = append(result.Warnings, "端口连通不代表代理认证或目标转发成功，请使用客户端验证实际请求")
+	result.ServiceStatusKnown = node.Registered && time.Since(node.LastSeen) < 90*time.Second
+	if result.ServiceStatusKnown {
+		result.ServiceRunning = port.InstanceRunning
+	}
+	proxyType := model.NormalizeProxyType(port.ProxyType)
+	if proxyType == model.ProxyTypeMieru && strings.EqualFold(port.Protocol, model.ProtocolUDP) {
+		// Mieru does not answer arbitrary UDP probes. No response is unknown,
+		// not a failed TCP test or a successful UDP business transaction.
+		result.UDPStatus = "unknown"
+		result.Status = "unknown"
+		result.Warnings = append(result.Warnings, "Mieru UDP 需要协议客户端验证；通用 UDP 探测无法确认可达性")
+		return result
+	}
+	result.TCPChecked = true
 	result.TCPConnectable = s.testTCPPort(ctx, node.Address, port.Port)
 	if !result.TCPConnectable {
 		result.Errors = append(result.Errors, fmt.Sprintf("TCP端口 %d 不可达", port.Port))
 	}
+	if result.TCPConnectable {
+		result.Status = "reachable"
+	}
 
 	// 2. 根据代理类型进行特定测试
-	switch port.ProxyType {
+	switch proxyType {
 	case "naive":
 		// NaïveProxy HTTPS测试
 		if port.Domain != "" {
-			tlsResult := s.testTLS(ctx, port.Domain, port.Port)
+			tlsResult := s.testTLSAt(ctx, node.Address, port.Domain, port.Port)
 			result.TLSValid = tlsResult
 			if !tlsResult.Valid {
 				result.Errors = append(result.Errors, fmt.Sprintf("TLS证书无效: %s", tlsResult.Error))
@@ -133,26 +169,10 @@ func (s *Server) TestPort(ctx context.Context, node *model.Node, port *model.Por
 			result.Errors = append(result.Errors, "未配置域名")
 		}
 
-	case "shadowtls":
-		// ShadowTLS 连通性测试
-		if result.TCPConnectable {
-			result.ServiceRunning = true
-		}
-
-	case "anytls":
-		// AnyTLS 连通性测试
-		if result.TCPConnectable {
-			result.ServiceRunning = true
-		}
-
-	case "mieru", "":
-		// Mieru UDP测试
-		result.UDPReachable = s.testUDPPort(ctx, node.Address, port.Port)
-		if !result.UDPReachable {
-			result.Errors = append(result.Errors, fmt.Sprintf("UDP端口 %d 不可达", port.Port))
-		}
 	}
-
+	if len(result.Errors) > 0 {
+		result.Status = "failed"
+	}
 	return result
 }
 
@@ -185,7 +205,7 @@ func (s *Server) testTCPPort(ctx context.Context, address string, port int) bool
 	defer cancel()
 
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", address, port))
+	conn, err := d.DialContext(ctx, "tcp", probeAddress(address, port))
 	if err != nil {
 		return false
 	}
@@ -199,34 +219,51 @@ func (s *Server) testUDPPort(ctx context.Context, address string, port int) bool
 	defer cancel()
 
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "udp", fmt.Sprintf("%s:%d", address, port))
+	conn, err := d.DialContext(ctx, "udp", probeAddress(address, port))
 	if err != nil {
 		return false
 	}
 	defer conn.Close()
 
-	// 发送探测包
-	_, err = conn.Write([]byte("test"))
-	return err == nil
+	deadline, _ := ctx.Deadline()
+	_ = conn.SetDeadline(deadline)
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	if _, err := conn.Write([]byte("test")); err != nil {
+		return false
+	}
+	var response [65535]byte
+	n, err := conn.Read(response[:])
+	return err == nil && n > 0
+}
+
+func probeAddress(host string, port int) string {
+	return net.JoinHostPort(strings.Trim(strings.TrimSpace(host), "[]"), strconv.Itoa(port))
 }
 
 // testTLS 测试TLS证书
 func (s *Server) testTLS(ctx context.Context, domain string, port int) *TLSTestResult {
+	return s.testTLSAt(ctx, domain, domain, port)
+}
+
+func (s *Server) testTLSAt(ctx context.Context, address, domain string, port int) *TLSTestResult {
 	result := &TLSTestResult{}
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	conn, err := tls.DialWithDialer(dialer, "tcp", fmt.Sprintf("%s:%d", domain, port), &tls.Config{
+	firstDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{
 		ServerName: domain,
 		// 先不验证，获取证书信息
 		InsecureSkipVerify: true,
-	})
+	}}
+	connRaw, err := firstDialer.DialContext(ctx, "tcp", probeAddress(address, port))
 	if err != nil {
 		result.Error = err.Error()
 		return result
 	}
+	conn := connRaw.(*tls.Conn)
 	defer conn.Close()
 
 	// 获取证书信息
@@ -244,9 +281,10 @@ func (s *Server) testTLS(ctx context.Context, domain string, port int) *TLSTestR
 	result.DaysToExpire = int(time.Until(cert.NotAfter).Hours() / 24)
 
 	// 验证证书（这次真验证）
-	conn2, err := tls.DialWithDialer(dialer, "tcp", fmt.Sprintf("%s:%d", domain, port), &tls.Config{
+	verifyDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{
 		ServerName: domain,
-	})
+	}}
+	conn2, err := verifyDialer.DialContext(ctx, "tcp", probeAddress(address, port))
 	if err != nil {
 		result.Error = fmt.Sprintf("证书验证失败: %v", err)
 		result.Valid = false
@@ -300,18 +338,20 @@ func (s *Server) GetNodeConfig(node *model.Node) map[string]interface{} {
 		}
 
 		// 添加代理特定配置
-		switch p.ProxyType {
-		case "naive":
+		switch model.NormalizeProxyType(p.ProxyType) {
+		case model.ProxyTypeNaive:
 			portConfig["naive"] = map[string]interface{}{
 				"domain":   p.Domain,
 				"autoACME": p.AutoACME,
 				"hasCert":  p.TLSCert != "",
 			}
-		case "shadowtls":
+		case model.ProxyTypeShadowTLS:
 			portConfig["shadowtls"] = map[string]interface{}{
-				"handshakeAddr": p.HandshakeAddr,
+				"handshakeAddr":  p.HandshakeAddr,
+				"backendAddr":    p.BackendAddr,
+				"backendManaged": p.BackendManaged,
 			}
-		case "anytls":
+		case model.ProxyTypeAnyTLS:
 			portConfig["anytls"] = map[string]interface{}{
 				"password": p.Password,
 			}

@@ -25,6 +25,12 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "备份读取失败或超过 16MB"})
 		return
 	}
+	s.restoreBackup(w, raw)
+}
+
+// Local imports and cloud restores use the same validation, recovery copy and
+// task reset so restoring from a remote file never bypasses model checks.
+func (s *Server) restoreBackup(w http.ResponseWriter, raw []byte) {
 	var preview struct {
 		Nodes []*model.Node `json:"nodes"`
 	}

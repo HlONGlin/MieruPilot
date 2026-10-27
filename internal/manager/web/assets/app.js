@@ -272,7 +272,7 @@
       function auditTable(entries) {
         return entries.length ? `<div class="table-wrap"><table class="audit-table"><thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>目标</th></tr></thead><tbody>${entries.map((entry) => `<tr><td>${esc(new Date(entry.time).toLocaleString())}</td><td>${esc(entry.actor)}</td><td>${esc(entry.action)}</td><td>${esc(entry.target || "—")}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty audit-empty">暂无操作记录</div>';
       }
-      function modal(title, body, onSubmit) {
+      function modal(title, body, onSubmit, onMount) {
         modalEl.innerHTML = `<div class="modal-back" data-modal-backdrop><form class="modal" id="modalForm"><h3>${title}</h3>${body}<div class="modal-foot"><button type="button" class="btn" data-modal-cancel>取消</button><button type="submit" class="btn primary">确认</button></div></form></div>`;
         const backdrop = modalEl.querySelector("[data-modal-backdrop]");
         const form = document.getElementById('modalForm');
@@ -303,6 +303,7 @@
           if (previousFocus?.isConnected) previousFocus.focus();
         };
         document.addEventListener('keydown', onKeydown);
+        onMount?.(form);
         form.querySelector('input,select,textarea')?.focus();
         backdrop.addEventListener("click", (e) => {
           if (e.target === backdrop) close();
@@ -436,7 +437,7 @@
         modal(
           "添加代理端口",
           `<div class="field"><label>代理类型</label><select name="proxyType" id="proxyTypeSelect">${typeOptions}</select></div>
-          <div class="field"><label>端口（1025-65535）</label><input name="port" type="number" min="1025" max="65535" placeholder="23456" required autofocus></div>
+          <div class="field"><label id="portRangeLabel">端口（1025-65535）</label><input name="port" type="number" min="1025" max="65535" placeholder="23456" required autofocus></div>
           <div class="field"><label>协议</label><select name="protocol"><option>TCP</option><option>UDP</option></select></div>
           <div class="field"><label>标签（可选）</label><input name="label" placeholder="例如 香港-1"></div>
           <div id="naiveFields" style="display:none">
@@ -449,25 +450,16 @@
           </div>
           <div id="shadowtlsFields" style="display:none">
             <div class="field"><label>握手服务器</label><input name="handshakeAddr" value="cloudflare.com:443" placeholder="cloudflare.com:443"></div>
+            <div class="field"><label>后端数据服务地址（可留空）</label><input name="backendAddr" placeholder="留空：自动在节点上部署 shadowsocks 后端"><p class="muted" style="margin:6px 0 0">留空时由面板分配仅本机可访问的端口和密码，Agent 自动安装并运行 shadowsocks。若已有自己的 shadowsocks，填写其地址（如 127.0.0.1:8388）即可，面板不会改动它</p></div>
+            <div class="field"><label>后端 SS 密码（自动部署时留空）</label><input name="backendPassword" placeholder="自有后端的密码"><p class="muted" style="margin:6px 0 0">用于生成客户端订阅（ShadowTLS 自身不携带认证）。自动部署时由面板生成</p></div>
+            <div class="field"><label>后端加密方式（自动部署时留空）</label><input name="backendCipher" placeholder="aes-256-gcm"></div>
           </div>
-          <script>
-            document.getElementById('proxyTypeSelect').onchange = function() {
-              const type = this.value;
-              document.getElementById('naiveFields').style.display = type === 'naive' ? 'block' : 'none';
-              document.getElementById('shadowtlsFields').style.display = type === 'shadowtls' ? 'block' : 'none';
-            };
-            const autoACMECheckbox = document.querySelector('[name="autoACME"]');
-            if (autoACMECheckbox) {
-              autoACMECheckbox.onchange = function() {
-                document.getElementById('manualCertFields').style.display = this.checked ? 'none' : 'block';
-              };
-            }
-          </script>`,
+          `,
           async (f) => {
             const proxyType = f.get("proxyType");
             const payload = {
               port: Number(f.get("port")),
-              protocol: f.get("protocol"),
+              protocol: proxyType === 'mieru' ? f.get("protocol") : 'TCP',
               label: f.get("label"),
               proxyType: proxyType,
             };
@@ -481,18 +473,49 @@
               }
             } else if (proxyType === "shadowtls") {
               payload.handshakeAddr = f.get("handshakeAddr");
+              payload.backendAddr = f.get("backendAddr");
+              payload.backendPassword = f.get("backendPassword");
+              payload.backendCipher = f.get("backendCipher");
             }
 
             await api("POST", "/api/nodes/" + state.node.id + "/ports", payload);
             toast("端口已生成并下发");
             renderDetail();
           },
+          bindProxyPortForm,
         );
+      }
+      function bindCertificateForm(form) {
+        const automatic = form.querySelector('[name="autoACME"]');
+        automatic.onchange = () => {
+          form.querySelector('#manualCertFields').style.display = automatic.checked ? 'none' : 'block';
+        };
+        automatic.onchange();
+      }
+      function bindProxyPortForm(form) {
+        const typeInput = form.querySelector('[name="proxyType"]');
+        const portInput = form.querySelector('[name="port"]');
+        const protocolInput = form.querySelector('[name="protocol"]');
+        typeInput.onchange = () => {
+          const type = typeInput.value;
+          form.querySelector('#naiveFields').style.display = type === 'naive' ? 'block' : 'none';
+          form.querySelector('#shadowtlsFields').style.display = type === 'shadowtls' ? 'block' : 'none';
+          form.querySelector('[name="domain"]').required = type === 'naive';
+          const minPort = type === 'mieru' ? 1025 : 1;
+          portInput.min = String(minPort);
+          form.querySelector('#portRangeLabel').textContent = '端口（' + minPort + '-65535）';
+          protocolInput.disabled = type !== 'mieru';
+          if (type !== 'mieru') protocolInput.value = 'TCP';
+          if (type === 'naive' && !portInput.value) portInput.value = '443';
+          if (portInput.value && Number(portInput.value) < minPort) portInput.value = '';
+        };
+        bindCertificateForm(form);
+        typeInput.onchange();
       }
       async function renderSettings() {
         shell("系统设置", '<div class="empty">加载中…</div>');
         try {
-          const [s, audit] = await Promise.all([api("GET", "/api/settings"), api("GET", "/api/audit?limit=100")]);
+          const [s, audit, cloud] = await Promise.all([api("GET", "/api/settings"), api("GET", "/api/audit?limit=100"), api("GET", "/api/backup/webdav")]);
           state.settings = s;
           document.querySelector(".content").innerHTML =
             `<div class="page-head"><div><h2>系统设置</h2><p>管理订阅地址与系统信息</p></div></div><div class="panel"><div class="panel-head"><h3>公开订阅地址</h3><span class="pill">Token 保护</span></div><p class="muted">将此地址填入 Clash Verge、mihomo 等客户端，即可订阅全部已启用节点。</p><div class="command"><code>${esc(s.subscriptionURL)}</code><button class="btn" data-copy="${esc(s.subscriptionURL)}">复制地址</button><button class="btn danger" data-rotate>重置令牌</button></div></div><div class="panel"><div class="panel-head"><h3>使用流程</h3></div><ol class="muted"><li>添加节点，复制部署命令到目标服务器。</li><li>节点上线后生成端口，等待 Agent 同步配置。</li><li>复制 mierus 链接，或使用上方订阅地址导入客户端。</li></ol></div><div class="panel"><div class="panel-head"><h3>系统信息</h3><span id="updateBadge"></span></div><div class="muted">Manager 版本：${esc(s.version || "—")}<br>数据文件：服务端本地 JSON 文件</div><div class="toolbar" style="margin-top:12px"><button class="btn" data-check-update>检查更新</button></div><div id="updateInfo" class="muted" style="margin-top:12px"></div></div>`;
@@ -513,6 +536,8 @@
             } catch (error) { feedback.textContent = error.message; }
             finally { event.target.value = ''; }
           };
+          document.querySelector('.content').insertAdjacentHTML('beforeend', cloudBackupPanel(cloud));
+          bindCloudBackup();
           document.querySelector('[data-check-update]')?.addEventListener('click', checkUpdate);
           document.querySelector('[data-apply-update]')?.addEventListener('click', applyUpdate);
           bindGlobal();
@@ -521,6 +546,67 @@
             `<div class="empty">${esc(e.message)}</div>`;
           bindGlobal();
         }
+      }
+      function cloudBackupPanel(config) {
+        return `<section class="panel"><div class="panel-head"><h3>WebDAV 云备份</h3><span class="pill">外部存储</span></div>
+          <p class="muted">将本项目的节点配置备份到已有 WebDAV 云盘。备份含节点账号、TLS 私钥和订阅令牌，请使用 HTTPS 及私有目录。当前为手动备份，不会自动覆盖本地配置。</p>
+          <form id="cloudBackupForm"><div class="field"><label for="cloudURL">WebDAV 备份目录地址</label><input id="cloudURL" name="url" type="url" value="${esc(config.url)}" placeholder="https://dav.example.com/remote.php/dav/files/user/MieruPilot/" maxlength="2048" required><small class="muted">填写最终目录地址；不存在时尝试创建该目录，父目录须已存在。先保存配置，再测试或备份。</small></div>
+          <div class="form-row"><div class="field"><label for="cloudUsername">WebDAV 用户名</label><input id="cloudUsername" name="username" value="${esc(config.username)}" autocomplete="off" maxlength="256"></div><div class="field"><label for="cloudPassword">密码 / 应用密码</label><input id="cloudPassword" name="password" type="password" autocomplete="new-password" maxlength="4096" placeholder="${config.hasPassword ? '已保存；留空保留密码' : '填写 WebDAV 密码或应用密码'}"></div></div>
+          <div class="form-row"><div class="field"><label for="cloudAllowHTTP">传输方式</label><select id="cloudAllowHTTP" name="allowHTTP"><option value="false" ${!config.allowHTTP ? 'selected' : ''}>仅允许 HTTPS（推荐）</option><option value="true" ${config.allowHTTP ? 'selected' : ''}>允许 HTTP（仅可信内网）</option></select></div><div class="field"><label for="cloudClearPassword">已保存密码</label><select id="cloudClearPassword" name="clearPassword"><option value="false">保留 / 使用新输入的密码</option><option value="true">清除已保存密码</option></select></div></div>
+          <div class="toolbar"><button class="btn primary" type="submit">保存云备份配置</button><button class="btn" type="button" data-cloud-action="test">测试连接</button><button class="btn" type="button" data-cloud-action="upload">立即备份</button><button class="btn" type="button" data-cloud-action="list">查看云端备份</button></div></form>
+          <p id="cloudBackupResult" class="muted" role="status"></p><div id="cloudBackupFiles"></div>
+          <p class="muted">云盘密码仅存于本地数据文件，接口不会回显，备份也不会包含云盘凭据。每次备份使用新文件名并下载校验，不自动删除历史备份。恢复会先保存本地恢复前备份，保留当前管理员、面板地址和云备份配置，并同步节点。</p></section>`;
+      }
+      function cloudBackupFilesTable(files) {
+        return `<div class="table-wrap"><table><thead><tr><th>云端备份</th><th>大小</th><th>修改时间</th><th>操作</th></tr></thead><tbody>${arrayOf(files).map(file => `<tr><td><code>${esc(file.name)}</code></td><td>${formatTraffic(file.size)}</td><td>${esc(file.modified ? new Date(file.modified).toLocaleString() : '—')}</td><td><button type="button" class="btn small danger" data-cloud-restore="${esc(file.name)}">恢复此备份</button></td></tr>`).join('') || '<tr><td colspan="4" class="muted">该目录暂无本项目创建的云备份。</td></tr>'}</tbody></table></div>`;
+      }
+      function bindCloudBackup() {
+        const form = document.getElementById('cloudBackupForm');
+        const feedback = document.getElementById('cloudBackupResult');
+        let busy = false;
+        let dirty = false;
+        form.addEventListener('input', () => { dirty = true; });
+        form.addEventListener('change', () => { dirty = true; });
+        const run = async action => {
+          if (busy) return;
+          busy = true;
+          document.querySelectorAll('#cloudBackupForm button,[data-cloud-restore]').forEach(button => { button.disabled = true; });
+          feedback.textContent = '正在处理，请稍候…';
+          try { await action(); } catch (error) { feedback.textContent = error.message; }
+          finally { busy = false; document.querySelectorAll('#cloudBackupForm button,[data-cloud-restore]').forEach(button => { button.disabled = false; }); }
+        };
+        form.onsubmit = event => {
+          event.preventDefault();
+          run(async () => {
+            const data = new FormData(form);
+            await api('PUT', '/api/backup/webdav', {url:data.get('url'),username:data.get('username'),password:data.get('password'),allowHTTP:data.get('allowHTTP')==='true',clearPassword:data.get('clearPassword')==='true'});
+            await renderSettings();
+            document.getElementById('cloudBackupResult').textContent = '云备份配置已保存，可测试连接或立即备份。';
+          });
+        };
+        form.querySelectorAll('[data-cloud-action]').forEach(button => {
+          button.onclick = () => {
+            if (dirty) { feedback.textContent = '配置已修改，请先保存云备份配置。'; return; }
+            run(async () => {
+              const action = button.dataset.cloudAction;
+              if (action === 'list') {
+                const files = await api('GET', '/api/backup/webdav/files');
+                document.getElementById('cloudBackupFiles').innerHTML = cloudBackupFilesTable(files);
+                feedback.textContent = `找到 ${files.length} 份云端备份。`;
+                document.querySelectorAll('[data-cloud-restore]').forEach(restore => {
+                  restore.onclick = () => {
+                    if (dirty) { feedback.textContent = '配置已修改，请先保存。'; return; }
+                    if (busy || !confirm(`从 ${restore.dataset.cloudRestore} 恢复？当前节点配置将被替换，服务端会先保存恢复前备份，并保留当前管理员和管理地址。`)) return;
+                    run(async () => { const result = await api('POST','/api/backup/webdav/restore',{name:restore.dataset.cloudRestore}); feedback.textContent=result.message; });
+                  };
+                });
+              } else {
+                const result = await api('POST','/api/backup/webdav/'+action);
+                feedback.textContent = result.message + (result.name ? '：'+result.name : '');
+              }
+            });
+          };
+        });
       }
       function bindGlobal() {
         document.querySelectorAll("[data-nav]").forEach(
@@ -701,11 +787,7 @@
             <div class="field"><label>TLS 证书</label><textarea name="tlsCert" rows="6" placeholder="-----BEGIN CERTIFICATE-----">${esc(p.tlsCert || '')}</textarea></div>
             <div class="field"><label>TLS 私钥</label><textarea name="tlsKey" rows="6" placeholder="-----BEGIN PRIVATE KEY-----">${esc(p.tlsKey || '')}</textarea></div>
           </div>
-          <script>
-            document.querySelector('[name="autoACME"]').onchange = function() {
-              document.getElementById('manualCertFields').style.display = this.checked ? 'none' : 'block';
-            };
-          </script>`,
+          `,
           async (f) => {
             const autoACME = f.get("autoACME") === "on";
             const payload = {
@@ -720,6 +802,7 @@
             toast("证书配置已更新");
             renderDetail();
           },
+          bindCertificateForm,
         );
       }
       async function retryPort(id) {
@@ -737,6 +820,10 @@
       async function manageTraffic(id) {
         const p = (state.node?.ports || []).find((x) => x.id === id);
         if (!p) return;
+        if (p.proxyType && p.proxyType !== 'mieru') {
+          toast('当前仅 Mieru 支持流量统计和月度限额');
+          return;
+        }
         modal(
           "流量管理",
           `<div class="field"><label>月度流量限额（GB，0 表示不限）</label><input name="trafficGB" type="number" min="0" step="0.01" value="${p.trafficLimit ? (p.trafficLimit / 1073741824).toFixed(2) : "0"}" required></div><p class="muted">当前已用：${formatTraffic(p.trafficUsed || 0)}。每月自动重置；达到限额后端口会自动停用，重置或调整限额后恢复。</p><p class="muted">mita 当前不支持可靠的服务端速率限制，带宽设置不会生效。</p><button type="button" class="btn" data-reset-traffic>立即重置流量</button>`,
@@ -785,11 +872,11 @@
         const clashURL =
             location.origin + url("/api/nodes/" + nodeID + "/clash.yaml"),
           detailID = "port-detail-" + p.id;
-         const traffic = p.trafficLimit ? `${formatTraffic(p.trafficUsed || 0)} / ${formatTraffic(p.trafficLimit)} (${Math.min(100, Math.round((p.trafficUsed || 0) / p.trafficLimit * 100))}%)` : `已用 ${formatTraffic(p.trafficUsed || 0)} / 不限`;
          const proxyType = p.proxyType || 'mieru';
+         const traffic = proxyType !== 'mieru' ? '暂不支持流量统计' : (p.trafficLimit ? `${formatTraffic(p.trafficUsed || 0)} / ${formatTraffic(p.trafficLimit)} (${Math.min(100, Math.round((p.trafficUsed || 0) / p.trafficLimit * 100))}%)` : `已用 ${formatTraffic(p.trafficUsed || 0)} / 不限`);
          const proxyIcon = {mieru: '🚀', naive: '🌐', anytls: '🔐', shadowtls: '🔒'}[proxyType] || '🔧';
          const proxyName = {mieru: 'Mieru', naive: 'NaïveProxy', anytls: 'AnyTLS', shadowtls: 'ShadowTLS'}[proxyType] || proxyType;
-         return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span> <span class="pill" title="${esc(proxyName)}">${proxyIcon}</span></td><td>${esc(p.label || "—")}</td><td><span class="traffic-cell">${esc(traffic)}${p.autoDisabled ? " · 已超限停用" : ""}</span></td><td>${portStatus(p)}</td><td><div class="port-actions"><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><select class="port-actions-menu" aria-label="端口 ${p.port} 更多操作" data-port-actions="${esc(p.id)}"><option value="">更多操作</option><option value="traffic">流量设置</option><option value="retry" ${p.enabled ? "" : "disabled"}>重试同步</option><option value="regenerate">重置账号</option>${proxyType === 'naive' ? '<option value="uploadCert">上传证书</option>' : ''}<option value="delete">删除</option></select></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="6" class="port-detail"><div class="port-detail-title">${proxyIcon} ${esc(proxyName)} 链接</div><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制链接</button>` : ""}</div>${proxyType === 'naive' ? `<div class="muted" style="margin-top:8px">域名: ${esc(p.domain || '未设置')} · 证书: ${p.autoACME ? '自动(ACME)' : (p.tlsCert ? '已上传' : '未配置')}</div>` : ''}${proxyType === 'shadowtls' ? `<div class="muted" style="margin-top:8px">握手服务器: ${esc(p.handshakeAddr || 'cloudflare.com:443')}</div>` : ''}<div class="port-detail-title" style="margin-top:12px">Clash / mihomo 单节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
+         return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span> <span class="pill" title="${esc(proxyName)}">${proxyIcon}</span></td><td>${esc(p.label || "—")}</td><td><span class="traffic-cell">${esc(traffic)}${proxyType === 'mieru' && p.autoDisabled ? " · 已超限停用" : ""}</span></td><td>${portStatus(p)}</td><td><div class="port-actions"><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><select class="port-actions-menu" aria-label="端口 ${p.port} 更多操作" data-port-actions="${esc(p.id)}"><option value="">更多操作</option>${proxyType === 'mieru' ? '<option value="traffic">流量设置</option>' : ''}<option value="retry" ${p.enabled ? "" : "disabled"}>重试同步</option><option value="regenerate">重置账号</option>${proxyType === 'naive' ? '<option value="uploadCert">上传证书</option>' : ''}<option value="delete">删除</option></select></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="6" class="port-detail"><div class="port-detail-title">${proxyIcon} ${esc(proxyName)} 链接</div><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制链接</button>` : ""}</div>${proxyType === 'naive' ? `<div class="muted" style="margin-top:8px">域名: ${esc(p.domain || '未设置')} · 证书: ${p.autoACME ? '自动(ACME)' : (p.tlsCert ? '已上传' : '未配置')}</div>` : ''}${proxyType === 'shadowtls' ? `<div class="muted" style="margin-top:8px">独立 ShadowTLS 链接不含后端账号，请优先使用下方 mihomo 订阅。握手服务器: ${esc(p.handshakeAddr || 'cloudflare.com:443')} · 后端服务: ${esc(p.backendAddr || '未配置')} · 后端密码: ${p.backendPassword ? '已配置' : '未配置（Clash 订阅会跳过该端口）'}</div>` : ''}<div class="port-detail-title" style="margin-top:12px">Clash / mihomo 单节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
       }
       function detailView(n, install, links) {
         n = n && typeof n === "object" ? n : {};
@@ -830,6 +917,7 @@
           .map((p) => `<option value="${esc(p.name)}">${esc(p.name)}</option>`)
           .join("");
         const portOptions = arrayOf(n.ports)
+          .filter(p => !p.proxyType || p.proxyType === 'mieru')
           .map(
             (p) =>
               `<option value="${p.port}">${p.port} · ${esc(p.label || p.protocol)}</option>`,
@@ -839,7 +927,7 @@
           .querySelector(".content")
           .insertAdjacentHTML(
             "beforeend",
-            `<div class="panel" id="egressPanel"><div class="panel-head"><div><h3>③ 出站管理</h3><span class="muted">落地机 SOCKS5 出站与连通性测试</span></div><button type="button" class="btn primary" data-add-egress>添加落地机</button></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>服务器</th><th>认证</th><th>状态</th><th>操作</th></tr></thead><tbody>${proxies.length ? proxies.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.host)}:${esc(p.port)}</td><td>${p.username ? "已配置" : "无认证"}</td><td>${p.enabled ? "启用" : "停用"}</td><td><div class="toolbar"><button type="button" class="btn small" data-edit-egress="${esc(p.id)}">编辑</button><button type="button" class="btn small" data-test-egress="${esc(p.id)}">测速</button><button type="button" class="btn small danger" data-remove-egress="${esc(p.id)}">删除</button></div></td></tr>`).join("") : '<tr><td colspan="5" class="muted">暂无落地机</td></tr>'}</tbody></table></div><p class="muted" style="font-size:12px">测速只验证 Manager 到落地机 SOCKS5 地址的 TCP 连通性。</p></div><div class="panel" id="routesPanel"><div class="panel-head"><div><h3>④ 路由规则</h3><span class="muted">按顺序匹配，第一条命中规则生效；不填域名和 IP 表示该端口全部目标</span></div><button type="button" class="btn primary" data-add-route>添加路由规则</button></div><div class="table-wrap"><table><thead><tr><th>顺序</th><th>规则名称</th><th>作用端口</th><th>匹配条件</th><th>动作</th><th>操作</th></tr></thead><tbody>${rules.length ? rules.map((r, i) => `<tr draggable="true" data-route-row="${esc(r.id)}"><td><span class="drag-handle">☷</span> ${i + 1}</td><td>${esc(r.name)}</td><td>${arrayOf(r.ports).length ? esc(r.ports.join(", ")) : "全部端口"}</td><td>${esc([...arrayOf(r.domainNames || r.Domains || r.domains), ...arrayOf(r.ipRanges || r.IPRanges)].join(", ") || "全部目标")}</td><td>${esc(r.action)}${arrayOf(r.proxyNames).length ? " → " + esc(r.proxyNames.join(", ")) : ""}</td><td><div class="toolbar"><button type="button" class="btn small" data-edit-route="${esc(r.id)}">编辑</button><button type="button" class="btn small danger" data-remove-route="${esc(r.id)}">删除</button></div></td></tr>`).join("") : '<tr><td colspan="6" class="muted">暂无路由规则，默认直连</td></tr>'}</tbody></table></div></div>`,
+            `<div class="panel" id="egressPanel"><div class="panel-head"><div><h3>③ 出站管理</h3><span class="muted">落地机 SOCKS5 出站与连通性测试</span></div><button type="button" class="btn primary" data-add-egress>添加落地机</button></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>服务器</th><th>认证</th><th>状态</th><th>操作</th></tr></thead><tbody>${proxies.length ? proxies.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.host)}:${esc(p.port)}</td><td>${p.username ? "已配置" : "无认证"}</td><td>${p.enabled ? "启用" : "停用"}</td><td><div class="toolbar"><button type="button" class="btn small" data-edit-egress="${esc(p.id)}">编辑</button><button type="button" class="btn small" data-test-egress="${esc(p.id)}">测速</button><button type="button" class="btn small danger" data-remove-egress="${esc(p.id)}">删除</button></div></td></tr>`).join("") : '<tr><td colspan="5" class="muted">暂无落地机</td></tr>'}</tbody></table></div><p class="muted" style="font-size:12px">测速只验证 Manager 到落地机 SOCKS5 地址的 TCP 连通性。</p></div><div class="panel" id="routesPanel"><div class="panel-head"><div><h3>④ 路由规则</h3><span class="muted">仅适用于 Mieru；按顺序匹配，第一条命中规则生效；不填域名和 IP 表示该端口全部目标</span></div><button type="button" class="btn primary" data-add-route>添加路由规则</button></div><div class="table-wrap"><table><thead><tr><th>顺序</th><th>规则名称</th><th>作用端口</th><th>匹配条件</th><th>动作</th><th>操作</th></tr></thead><tbody>${rules.length ? rules.map((r, i) => `<tr draggable="true" data-route-row="${esc(r.id)}"><td><span class="drag-handle">☷</span> ${i + 1}</td><td>${esc(r.name)}</td><td>${arrayOf(r.ports).length ? esc(r.ports.join(", ")) : "全部 Mieru 端口"}</td><td>${esc([...arrayOf(r.domainNames || r.Domains || r.domains), ...arrayOf(r.ipRanges || r.IPRanges)].join(", ") || "全部目标")}</td><td>${esc(r.action)}${arrayOf(r.proxyNames).length ? " → " + esc(r.proxyNames.join(", ")) : ""}</td><td><div class="toolbar"><button type="button" class="btn small" data-edit-route="${esc(r.id)}">编辑</button><button type="button" class="btn small danger" data-remove-route="${esc(r.id)}">删除</button></div></td></tr>`).join("") : '<tr><td colspan="6" class="muted">暂无路由规则，默认直连</td></tr>'}</tbody></table></div></div>`,
           );
         bindEgressEvents(n);
         bindRouteDrag(n);
@@ -883,7 +971,7 @@
       function addRoute(n, options, portOptions) {
         modal(
           "添加路由规则",
-          `<div class="field"><label>规则名称</label><input name="name" required placeholder="日本服务"></div><div class="field"><label>作用端口</label><select name="ports" multiple size="3"><option value="">全部端口</option>${portOptions || ""}</select><small class="muted">不选择具体端口时作用于全部端口，可按住 Ctrl 多选。</small></div><div class="field"><label>域名（逗号分隔）</label><input name="domains" placeholder="example.com,*.example.com"></div><div class="field"><label>IP/CIDR（逗号分隔）</label><input name="ips" placeholder="8.8.8.8/32"></div><div class="field"><label>动作 / 出站</label><select name="action"><option value="DIRECT">DIRECT · 直连</option><option value="PROXY">PROXY · 选择出站</option><option value="REJECT">REJECT · 拒绝</option></select></div><div class="field"><label>指定出站（PROXY 必填）</label><select name="proxy"><option value="">请选择</option>${options}</select></div>`,
+          `<p class="muted">出站规则仅作用于 Mieru；其他协议不受此处配置控制。</p><div class="field"><label>规则名称</label><input name="name" required placeholder="日本服务"></div><div class="field"><label>作用端口</label><select name="ports" multiple size="3"><option value="">全部 Mieru 端口</option>${portOptions || ""}</select><small class="muted">不选择具体端口时作用于全部 Mieru 端口，可按住 Ctrl 多选。</small></div><div class="field"><label>域名（逗号分隔）</label><input name="domains" placeholder="example.com,*.example.com"></div><div class="field"><label>IP/CIDR（逗号分隔）</label><input name="ips" placeholder="8.8.8.8/32"></div><div class="field"><label>动作 / 出站</label><select name="action"><option value="DIRECT">DIRECT · 直连</option><option value="PROXY">PROXY · 选择出站</option><option value="REJECT">REJECT · 拒绝</option></select></div><div class="field"><label>指定出站（PROXY 必填）</label><select name="proxy"><option value="">请选择</option>${options}</select></div>`,
           async (f) => {
             const e = normalizeEgress(n.egress);
             const domains = String(f.get("domains"))
@@ -1090,6 +1178,7 @@
           )
           .join("");
         const portOptions = arrayOf(n.ports)
+          .filter((p) => (p.proxyType || 'mieru') === 'mieru')
           .map(
             (p) =>
               `<option value="${p.port}" ${arrayOf(r.ports).includes(p.port) ? "selected" : ""}>${p.port} · ${esc(p.label || p.protocol)}</option>`,
@@ -1097,7 +1186,7 @@
           .join("");
         modal(
           "编辑路由规则",
-          `<div class="field"><label>规则名称</label><input name="name" value="${esc(r.name)}" required></div><div class="field"><label>作用端口</label><select name="ports" multiple size="3"><option value="">全部端口</option>${portOptions}</select></div><div class="field"><label>域名（逗号分隔）</label><input name="domains" value="${esc(arrayOf(r.domainNames).join(", "))}" placeholder="留空表示全部目标"></div><div class="field"><label>IP/CIDR（逗号分隔）</label><input name="ips" value="${esc(arrayOf(r.ipRanges).join(", "))}" placeholder="留空表示全部目标"></div><div class="field"><label>动作 / 出站</label><select name="action"><option value="DIRECT" ${r.action === "DIRECT" ? "selected" : ""}>DIRECT · 直连</option><option value="PROXY" ${r.action === "PROXY" ? "selected" : ""}>PROXY · 选择落地机</option><option value="REJECT" ${r.action === "REJECT" ? "selected" : ""}>REJECT · 拒绝</option></select></div><div class="field"><label>指定落地机（PROXY 必填）</label><select name="proxy"><option value="">请选择</option>${proxyOptions}</select></div>`,
+          `<div class="field"><label>规则名称</label><input name="name" value="${esc(r.name)}" required></div><div class="field"><label>作用端口</label><select name="ports" multiple size="3"><option value="">全部 Mieru 端口</option>${portOptions}</select></div><div class="field"><label>域名（逗号分隔）</label><input name="domains" value="${esc(arrayOf(r.domainNames).join(", "))}" placeholder="留空表示全部目标"></div><div class="field"><label>IP/CIDR（逗号分隔）</label><input name="ips" value="${esc(arrayOf(r.ipRanges).join(", "))}" placeholder="留空表示全部目标"></div><div class="field"><label>动作 / 出站</label><select name="action"><option value="DIRECT" ${r.action === "DIRECT" ? "selected" : ""}>DIRECT · 直连</option><option value="PROXY" ${r.action === "PROXY" ? "selected" : ""}>PROXY · 选择落地机</option><option value="REJECT" ${r.action === "REJECT" ? "selected" : ""}>REJECT · 拒绝</option></select></div><div class="field"><label>指定落地机（PROXY 必填）</label><select name="proxy"><option value="">请选择</option>${proxyOptions}</select></div>`,
           async (f) => {
             r.name = f.get("name");
             r.ports = Array.from(f.getAll("ports"))

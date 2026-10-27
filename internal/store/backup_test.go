@@ -33,6 +33,25 @@ func TestTasksSurviveRestartAndBackupExcludesThem(t *testing.T) {
 	}
 }
 
+func TestRestoreHTTPSPortsUsesProtocolPrivileges(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "data.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := &model.Node{ID: "node", APIKey: "key", Ports: []*model.Port{
+		{ID: "https", Port: 443, Protocol: model.ProtocolTCP, ProxyType: model.ProxyTypeNaive},
+	}}
+	raw, _ := json.Marshal(map[string]any{"nodes": []*model.Node{n}})
+	if err := s.Restore(raw); err != nil {
+		t.Fatalf("HTTPS backup cannot be restored: %v", err)
+	}
+	n.Ports[0].ProxyType = model.ProxyTypeMieru
+	raw, _ = json.Marshal(map[string]any{"nodes": []*model.Node{n}})
+	if err := s.Restore(raw); err == nil {
+		t.Fatal("unprivileged mita cannot bind port 443")
+	}
+}
+
 func TestRestorePreservesAdministratorAndPathAndRejectsInvalidBackup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "data.json")
 	s, _ := Open(path)

@@ -59,6 +59,12 @@ func (s *Server) describeMutation(r *http.Request) (string, string) {
 	path := r.URL.Path
 	action := "配置变更"
 	switch {
+	case strings.HasSuffix(path, "/api/backup/webdav"):
+		action = "更新 WebDAV 云备份设置"
+	case strings.HasSuffix(path, "/api/backup/webdav/upload"):
+		action = "上传 WebDAV 云备份"
+	case strings.HasSuffix(path, "/api/backup/webdav/restore"):
+		action = "恢复 WebDAV 云备份"
 	case strings.HasSuffix(path, "/api/backup/restore"):
 		action = "恢复备份"
 	case strings.HasSuffix(path, "/api/settings/sub-token/rotate"):

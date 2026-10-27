@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,6 +27,10 @@ import (
 	"merit/internal/mieru"
 	"merit/internal/model"
 	"merit/internal/netcheck"
+	"merit/internal/proxy/anytls"
+	"merit/internal/proxy/naive"
+	"merit/internal/proxy/shadowsocks"
+	"merit/internal/proxy/shadowtls"
 )
 
 // Version is the agent build version.
@@ -46,6 +51,12 @@ type Agent struct {
 	client     *http.Client
 	poll       *http.Client
 	instanceID string
+	runCommand func(string, ...string) (string, error)
+	unitDir    string
+	mitaDir    string
+	// Test hooks for the managed ShadowTLS backend; nil uses the real host.
+	ensureBackendBinary func() error
+	backendPortFree     func(addr string) bool
 	// purging disables the maintenance loops so they cannot reinstall mita
 	// while the node is being torn down.
 	purging atomic.Bool
@@ -307,7 +318,10 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 	otherPorts := []*model.Port{}
 
 	// 使用完整Port信息来判断代理类型
-	for i, port := range cfg.Ports {
+	for _, port := range cfg.Ports {
+		if port == nil {
+			return "", nil, fmt.Errorf("端口配置为空")
+		}
 		proxyType := port.ProxyType
 		if proxyType == "" {
 			proxyType = model.ProxyTypeMieru
@@ -315,28 +329,42 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 
 		if proxyType == model.ProxyTypeMieru {
 			// Mieru端口使用原有逻辑
-			if i < len(cfg.PortBindings) {
-				mieruBindings = append(mieruBindings, cfg.PortBindings[i])
-			}
-			if i < len(cfg.Users) {
-				mieruUsers = append(mieruUsers, cfg.Users[i])
-			}
-			if i < len(cfg.PortIDs) {
-				mieruPortIDs = append(mieruPortIDs, cfg.PortIDs[i])
-			}
+			mieruBindings = append(mieruBindings, model.PortBinding{Port: port.Port, Protocol: port.Protocol})
+			mieruUsers = append(mieruUsers, model.UserCred{Name: port.Username, Password: port.Password})
+			mieruPortIDs = append(mieruPortIDs, port.ID)
 		} else {
 			// 其他代理类型
 			otherPorts = append(otherPorts, port)
 		}
 	}
+	// Older managers send only the parallel mita arrays.
+	if len(cfg.Ports) == 0 && len(cfg.PortBindings) > 0 {
+		mieruBindings, mieruUsers, mieruPortIDs = cfg.PortBindings, cfg.Users, cfg.PortIDs
+	}
 
 	var allResults []model.PortInstanceResult
+	var syncErrors []error
+	if len(mieruBindings) == 0 && !cfg.Partial {
+		stopped, err := a.removeStaleInstances(map[int]bool{})
+		if err != nil {
+			syncErrors = append(syncErrors, err)
+		}
+		for i := range stopped {
+			for _, target := range cfg.DisabledPorts {
+				if target.Port == stopped[i].Port {
+					stopped[i].PortID = target.ID
+				}
+			}
+		}
+		allResults = append(allResults, stopped...)
+	}
 
 	// 处理mieru端口（现有逻辑）
 	if len(mieruBindings) > 0 {
+		var mitaErr error
 		if !a.mitaInstalled() {
 			if _, instErr := a.ensureMita(); instErr != nil {
-				return "", nil, fmt.Errorf("mita 未安装且自动安装失败: %w", instErr)
+				mitaErr = fmt.Errorf("mita 未安装且自动安装失败: %w", instErr)
 			}
 		}
 
@@ -345,9 +373,30 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 		mieruCfg.Users = mieruUsers
 		mieruCfg.PortIDs = mieruPortIDs
 
-		results, err := a.applyPortInstances(&mieruCfg)
-		if err != nil {
-			return "", results, err
+		var results []model.PortInstanceResult
+		if mitaErr == nil {
+			results, mitaErr = a.applyPortInstances(&mieruCfg)
+		}
+		if mitaErr != nil {
+			syncErrors = append(syncErrors, mitaErr)
+			reported := map[int]bool{}
+			for i := range results {
+				result := &results[i]
+				if !result.OK && result.Error == "" {
+					result.Error = mitaErr.Error()
+				}
+				reported[result.Port] = true
+			}
+			for i, binding := range mieruBindings {
+				if reported[binding.Port] {
+					continue
+				}
+				result := model.PortInstanceResult{Port: binding.Port, Error: mitaErr.Error(), CheckedAt: time.Now()}
+				if i < len(mieruPortIDs) {
+					result.PortID = mieruPortIDs[i]
+				}
+				results = append(results, result)
+			}
 		}
 		allResults = append(allResults, results...)
 	}
@@ -365,6 +414,7 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 			result.Error = fmt.Sprintf("安装代理失败: %v", err)
 			result.OK = false
 			allResults = append(allResults, result)
+			syncErrors = append(syncErrors, fmt.Errorf("端口 %d: %s", port.Port, result.Error))
 			continue
 		}
 
@@ -373,6 +423,7 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 			result.Error = fmt.Sprintf("启动代理失败: %v", err)
 			result.OK = false
 			allResults = append(allResults, result)
+			syncErrors = append(syncErrors, fmt.Errorf("端口 %d: %s", port.Port, result.Error))
 			continue
 		}
 
@@ -382,15 +433,27 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 		result.OK = running
 		if !running {
 			result.Error = "代理启动后未处于运行状态"
+			syncErrors = append(syncErrors, fmt.Errorf("端口 %d: %s", port.Port, result.Error))
 		}
 
 		allResults = append(allResults, result)
 	}
 
+	// Stop proxy instances (naive/anytls/shadowtls) that are no longer part of the
+	// desired configuration. They live in their own systemd units, so they would
+	// otherwise keep running with stale credentials after a port is removed.
+	if !cfg.Partial {
+		stoppedProxies, err := a.removeStaleProxyInstances(cfg)
+		if err != nil {
+			syncErrors = append(syncErrors, err)
+		}
+		allResults = append(allResults, stoppedProxies...)
+	}
+
 	msg := fmt.Sprintf("已应用 %d 个代理实例（%d mieru，%d 其他）",
 		len(cfg.Ports), len(mieruBindings), len(otherPorts))
 
-	return msg, allResults, nil
+	return msg, allResults, errors.Join(syncErrors...)
 }
 
 // ensureProxyInstalled 确保指定代理类型已安装
@@ -422,7 +485,7 @@ func (a *Agent) ensureProxyInstalled(port *model.Port) error {
 // for per-port egress because mita's native egress rules do not match inbound
 // ports. Each instance gets its own JSON config, systemd unit and UDS socket.
 func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstanceResult, error) {
-	const configDir = "/etc/merit-mita"
+	configDir := a.mitaConfigDir()
 	seenPorts := make(map[int]bool, len(cfg.PortBindings))
 	for i, binding := range cfg.PortBindings {
 		if seenPorts[binding.Port] {
@@ -499,7 +562,7 @@ func (a *Agent) applyPortInstances(cfg *model.DesiredConfig) ([]model.PortInstan
 			return results, fmt.Errorf("设置端口 %d 配置模式失败: %v %s", binding.Port, err, out)
 		}
 		unit := instanceUnit(binding.Port, configPath)
-		unitPath := filepath.Join("/etc/systemd/system", unit+".service")
+		unitPath := filepath.Join(a.systemdDir(), unit+".service")
 		unitRaw := []byte(instanceService(unit, configPath))
 		oldUnit, unitErr := os.ReadFile(unitPath)
 		if unitErr != nil || !bytes.Equal(oldUnit, unitRaw) {
@@ -605,7 +668,7 @@ func configDigest(raw []byte) string {
 // The task still fails and remains queued; rollback is not reported as applying
 // the newly requested configuration.
 func (a *Agent) restorePreviousConfig(port int) {
-	path := filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json", port))
+	path := filepath.Join(a.mitaConfigDir(), fmt.Sprintf("%d.json", port))
 	previous, err := os.ReadFile(path + ".previous")
 	if err != nil {
 		return
@@ -620,13 +683,17 @@ func (a *Agent) restorePreviousConfig(port int) {
 }
 
 func writeConfigAtomic(path string, raw []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".merit-mita-*.tmp")
+	return writeFileAtomic(path, raw, 0o640)
+}
+
+func writeFileAtomic(path string, raw []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".merit-config-*.tmp")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
-	if err := f.Chmod(0o640); err != nil {
+	if err := f.Chmod(mode); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -744,8 +811,11 @@ WantedBy=multi-user.target
 }
 
 func (a *Agent) removeStaleInstances(desired map[int]bool) ([]model.PortInstanceResult, error) {
-	entries, err := os.ReadDir("/etc/systemd/system")
+	entries, err := os.ReadDir(a.systemdDir())
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	var stopped []model.PortInstanceResult
@@ -764,14 +834,14 @@ func (a *Agent) removeStaleInstances(desired map[int]bool) ([]model.PortInstance
 			return stopped, fmt.Errorf("停止已禁用端口 %d 的 mita 实例失败: %v %s", port, stopErr, out)
 		}
 		stopped = append(stopped, model.PortInstanceResult{Port: port, Running: false, OK: true, CheckedAt: time.Now()})
-		_ = os.Remove(filepath.Join("/etc/systemd/system", name))
-		_ = os.Remove(filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json", port)))
-		_ = os.Remove(filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json.applied", port)))
-		_ = os.Remove(filepath.Join("/etc/merit-mita", fmt.Sprintf("%d.json.previous", port)))
+		_ = os.Remove(filepath.Join(a.systemdDir(), name))
+		_ = os.Remove(filepath.Join(a.mitaConfigDir(), fmt.Sprintf("%d.json", port)))
+		_ = os.Remove(filepath.Join(a.mitaConfigDir(), fmt.Sprintf("%d.json.applied", port)))
+		_ = os.Remove(filepath.Join(a.mitaConfigDir(), fmt.Sprintf("%d.json.previous", port)))
 	}
 	// Remove orphaned configs too (for example after an interrupted Agent
 	// reinstall where the unit file was already removed).
-	configs, err := os.ReadDir("/etc/merit-mita")
+	configs, err := os.ReadDir(a.mitaConfigDir())
 	if err != nil && !os.IsNotExist(err) {
 		return stopped, err
 	}
@@ -783,12 +853,97 @@ func (a *Agent) removeStaleInstances(desired map[int]bool) ([]model.PortInstance
 		if parseErr != nil || desired[port] {
 			continue
 		}
-		_ = os.Remove(filepath.Join("/etc/merit-mita", entry.Name()))
+		_ = os.Remove(filepath.Join(a.mitaConfigDir(), entry.Name()))
+	}
+	if len(stopped) == 0 {
+		return stopped, nil
 	}
 	if _, err := a.run("systemctl", "daemon-reload"); err != nil {
 		return stopped, fmt.Errorf("清理实例后 systemd 重载失败: %w", err)
 	}
 	return stopped, nil
+}
+
+// removeStaleProxyInstances stops the naive/anytls/shadowtls instances whose port
+// is no longer enabled. The units are named after the port ID, so a scan of the
+// systemd directory finds every orphan, including ones left by an interrupted
+// earlier sync.
+func (a *Agent) removeStaleProxyInstances(cfg *model.DesiredConfig) ([]model.PortInstanceResult, error) {
+	desired := map[string]bool{}
+	for _, port := range cfg.Ports {
+		if port == nil || !port.Enabled {
+			continue
+		}
+		if model.NormalizeProxyType(port.ProxyType) != model.ProxyTypeMieru {
+			desired[safePortID(port.ID)] = true
+		}
+	}
+	disabled := map[string]model.PortInstanceTarget{}
+	for _, target := range cfg.DisabledPorts {
+		disabled[safePortID(target.ID)] = target
+	}
+
+	entries, err := os.ReadDir(a.systemdDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var results []model.PortInstanceResult
+	removed := false
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".service") {
+			continue
+		}
+		serviceName := strings.TrimSuffix(name, ".service")
+		// A managed backend whose ShadowTLS port is gone would otherwise keep
+		// running forever, because it has no instance of its own to report.
+		if backendID, isBackend := parseBackendUnitName(serviceName); isBackend {
+			if !desired[backendID] {
+				if err := a.removeProxyInstance(serviceName, "", backendID); err != nil {
+					return results, fmt.Errorf("清理孤立的 ShadowTLS 后端 %s 失败: %w", serviceName, err)
+				}
+				removed = true
+			}
+			continue
+		}
+		proxyType, portID, ok := parseProxyUnitName(serviceName)
+		if !ok || desired[portID] {
+			continue
+		}
+		port := a.proxyUnitPort(serviceName)
+		if err := a.removeProxyInstance(serviceName, proxyType, portID); err != nil {
+			return results, fmt.Errorf("清理已停用端口 %d 的 %s 实例失败: %w", port, proxyType, err)
+		}
+		removed = true
+		target := disabled[portID]
+		results = append(results, model.PortInstanceResult{
+			PortID:    target.ID,
+			Port:      firstNonZero(port, target.Port),
+			Running:   false,
+			OK:        true,
+			CheckedAt: time.Now(),
+		})
+	}
+	if !removed {
+		return results, nil
+	}
+	if out, err := a.run("systemctl", "daemon-reload"); err != nil {
+		return results, fmt.Errorf("清理代理实例后 systemd 重载失败: %v %s", err, strings.TrimSpace(out))
+	}
+	return results, nil
+}
+
+func firstNonZero(values ...int) int {
+	for _, v := range values {
+		if v != 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 // purgeAll stops and removes every trace installed by the agent: the per-port
@@ -827,6 +982,29 @@ func (a *Agent) purgeAll() (string, error) {
 	}
 	_, _ = a.run("systemctl", "daemon-reload")
 
+	// Remove the proxy instances of the non-mieru protocols together with the
+	// binaries and configs the agent installed for them.
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".service") {
+			continue
+		}
+		serviceName := strings.TrimSuffix(name, ".service")
+		if backendID, isBackend := parseBackendUnitName(serviceName); isBackend {
+			if err := a.removeProxyInstance(serviceName, "", backendID); err != nil {
+				problems = append(problems, err.Error())
+			}
+			continue
+		}
+		proxyType, portID, ok := parseProxyUnitName(serviceName)
+		if !ok {
+			continue
+		}
+		if err := a.removeProxyInstance(serviceName, proxyType, portID); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+
 	if err := os.RemoveAll("/etc/merit-mita"); err != nil {
 		problems = append(problems, fmt.Sprintf("删除端口配置与账号失败: %v", err))
 	}
@@ -836,6 +1014,15 @@ func (a *Agent) purgeAll() (string, error) {
 	_ = os.RemoveAll("/var/lib/mita")
 	_ = os.RemoveAll("/var/log/mita")
 	_ = os.RemoveAll("/var/run/mita")
+	// NaiveProxy configs and certificates, plus the binaries the agent installed
+	// for the extra protocols.
+	_ = os.RemoveAll("/etc/merit")
+	for _, binary := range []string{naive.BinaryPath, anytls.ServerBinaryPath, shadowtls.BinaryPath, shadowsocks.BinaryPath} {
+		if err := os.Remove(binary); err != nil && !os.IsNotExist(err) {
+			warnings = append(warnings, fmt.Sprintf("删除 %s 失败: %v", binary, err))
+		}
+	}
+	_, _ = a.run("systemctl", "daemon-reload")
 
 	// Remove the mita package. This is best effort: all instances are already
 	// stopped and their configs deleted, so a packaging failure should not keep
@@ -908,11 +1095,16 @@ func (a *Agent) status(installed bool, lastErr error) model.AgentStatus {
 		if v, err := a.run("mita", "version"); err == nil {
 			st.MitaVersion = strings.TrimSpace(v)
 		}
-		st.PortInstances = a.instanceStatuses()
+	}
+	// Other protocols must remain observable even if mita installation failed.
+	st.PortInstances = a.instanceStatuses()
+	if installed {
 		for _, instance := range st.PortInstances {
 			if instance.Running {
-				st.MitaRunning = true
-				break
+				if active, _ := a.instanceRunning(instance.Port); active {
+					st.MitaRunning = true
+					break
+				}
 			}
 		}
 	}
@@ -920,28 +1112,51 @@ func (a *Agent) status(installed bool, lastErr error) model.AgentStatus {
 }
 
 func (a *Agent) instanceStatuses() []model.PortInstanceStatus {
-	entries, err := os.ReadDir("/etc/merit-mita")
+	var out []model.PortInstanceStatus
+	entries, err := os.ReadDir(a.mitaConfigDir())
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			port, err := strconv.Atoi(strings.TrimSuffix(entry.Name(), ".json"))
+			if err != nil {
+				continue
+			}
+			running, statusErr := a.instanceRunning(port)
+			result := model.PortInstanceStatus{Port: port, Running: running}
+			if total, err := a.trafficForPort(port); err == nil {
+				result.TotalTraffic = total
+			}
+			if statusErr != nil {
+				result.Error = statusErr.Error()
+			}
+			out = append(out, result)
+		}
+	}
+	return append(out, a.proxyInstanceStatuses()...)
+}
+
+// proxyInstanceStatuses reports the naive/anytls/shadowtls instances. They are
+// tracked through their systemd units rather than config files, and the unit
+// records the port it serves.
+func (a *Agent) proxyInstanceStatuses() []model.PortInstanceStatus {
+	entries, err := os.ReadDir(a.systemdDir())
 	if err != nil {
 		return nil
 	}
 	var out []model.PortInstanceStatus
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".service") {
 			continue
 		}
-		port, err := strconv.Atoi(strings.TrimSuffix(entry.Name(), ".json"))
-		if err != nil {
+		serviceName := strings.TrimSuffix(name, ".service")
+		if _, _, ok := parseProxyUnitName(serviceName); !ok {
 			continue
 		}
-		running, statusErr := a.instanceRunning(port)
-		result := model.PortInstanceStatus{Port: port, Running: running}
-		if total, err := a.trafficForPort(port); err == nil {
-			result.TotalTraffic = total
-		}
-		if statusErr != nil {
-			result.Error = statusErr.Error()
-		}
-		out = append(out, result)
+		active, _ := a.serviceActive(serviceName)
+		out = append(out, model.PortInstanceStatus{Port: a.proxyUnitPort(serviceName), Running: active})
 	}
 	return out
 }
@@ -955,7 +1170,7 @@ type mitaMetrics struct {
 
 // trafficForPort reads the live metrics through the port's private mita UDS.
 func (a *Agent) trafficForPort(port int) (int64, error) {
-	data, err := os.ReadFile(filepath.Join("/etc/merit-mita", strconv.Itoa(port)+".json"))
+	data, err := os.ReadFile(filepath.Join(a.mitaConfigDir(), strconv.Itoa(port)+".json"))
 	if err != nil {
 		return 0, err
 	}
@@ -993,7 +1208,24 @@ func parseMitaMetrics(out, username string) (int64, error) {
 // --- process helpers --------------------------------------------------------
 
 func (a *Agent) run(name string, args ...string) (string, error) {
+	if a.runCommand != nil {
+		return a.runCommand(name, args...)
+	}
 	return a.runWithEnv(60*time.Second, nil, name, args...)
+}
+
+func (a *Agent) systemdDir() string {
+	if a.unitDir != "" {
+		return a.unitDir
+	}
+	return proxyUnitDir
+}
+
+func (a *Agent) mitaConfigDir() string {
+	if a.mitaDir != "" {
+		return a.mitaDir
+	}
+	return "/etc/merit-mita"
 }
 
 func (a *Agent) runWithEnv(timeout time.Duration, extra map[string]string, name string, args ...string) (string, error) {

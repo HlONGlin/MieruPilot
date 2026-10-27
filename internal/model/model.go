@@ -2,7 +2,10 @@
 // manager and the merit agent.
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Proxy transport protocols supported by mita.
 const (
@@ -12,10 +15,10 @@ const (
 
 // Proxy types supported by the system.
 const (
-	ProxyTypeMieru      = "mieru"
-	ProxyTypeNaive      = "naive"
-	ProxyTypeAnyTLS     = "anytls"
-	ProxyTypeShadowTLS  = "shadowtls"
+	ProxyTypeMieru     = "mieru"
+	ProxyTypeNaive     = "naive"
+	ProxyTypeAnyTLS    = "anytls"
+	ProxyTypeShadowTLS = "shadowtls"
 )
 
 // Defaults applied when generating a mieru client profile.
@@ -54,11 +57,41 @@ type Port struct {
 	AutoDisabled   bool      `json:"autoDisabled,omitempty"`   // Disabled automatically after exceeding the limit
 
 	// Proxy-specific configuration
-	TLSCert      string `json:"tlsCert,omitempty"`      // TLS certificate (for naive proxy)
-	TLSKey       string `json:"tlsKey,omitempty"`       // TLS private key (for naive proxy)
-	Domain       string `json:"domain,omitempty"`       // Domain name for ACME or SNI
+	TLSCert       string `json:"tlsCert,omitempty"`       // TLS certificate (for naive proxy)
+	TLSKey        string `json:"tlsKey,omitempty"`        // TLS private key (for naive proxy)
+	Domain        string `json:"domain,omitempty"`        // Domain name for ACME or SNI
 	HandshakeAddr string `json:"handshakeAddr,omitempty"` // Handshake server for ShadowTLS
-	AutoACME     bool   `json:"autoACME,omitempty"`     // Enable automatic ACME certificate
+	AutoACME      bool   `json:"autoACME,omitempty"`      // Enable automatic ACME certificate
+	// BackendAddr is the data server that ShadowTLS relays decrypted traffic to
+	// (for example a shadowsocks instance reachable at 127.0.0.1:8388).
+	BackendAddr string `json:"backendAddr,omitempty"`
+	// BackendPassword and BackendCipher are the credentials of that data server.
+	// They are only used to generate client configurations: ShadowTLS carries no
+	// authentication of its own.
+	BackendPassword string `json:"backendPassword,omitempty"`
+	BackendCipher   string `json:"backendCipher,omitempty"`
+	// BackendManaged marks a backend that the Manager allocated itself. The agent
+	// then deploys a loopback-only shadowsocks server for it. A manually entered
+	// backend is never touched by the agent.
+	BackendManaged bool `json:"backendManaged,omitempty"`
+}
+
+// NormalizeProxyType returns the effective proxy type of a port, defaulting to
+// mieru for older records that have no proxy type stored.
+func NormalizeProxyType(proxyType string) string {
+	if strings.TrimSpace(proxyType) == "" {
+		return ProxyTypeMieru
+	}
+	return proxyType
+}
+
+// MinListenPort reflects the dedicated, unprivileged user used by mita.
+// The other servers run as root and can bind HTTPS and other reserved ports.
+func MinListenPort(proxyType string) int {
+	if NormalizeProxyType(proxyType) == ProxyTypeMieru {
+		return 1025
+	}
+	return 1
 }
 
 // Node represents one managed host running the merit agent and mita.

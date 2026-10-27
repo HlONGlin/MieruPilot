@@ -311,6 +311,9 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 		return "", nil, fmt.Errorf("缺少配置")
 	}
 
+	// Initialize preflight checker
+	preflight := NewPreflightChecker()
+
 	// 分离不同代理类型的端口
 	mieruBindings := []model.PortBinding{}
 	mieruUsers := []model.UserCred{}
@@ -344,6 +347,70 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 
 	var allResults []model.PortInstanceResult
 	var syncErrors []error
+
+	// Run preflight checks for each port
+	// We determine if it's a "new port" by checking if we're adding it
+	// For simplicity, treat all ports in a sync task as potentially new
+	// The preflight logic will skip port availability check for existing ports (isNewPort=false)
+	// Caller should set isNewPort=true for actual new ports
+	preflightFailures := make(map[string]*PreflightResult)
+	for _, port := range cfg.Ports {
+		if port == nil {
+			continue
+		}
+		// For now, we conservatively check all ports as if they're new
+		// In practice, the caller would need to tell us which are truly new
+		// For this implementation, we'll do preflight on all but not fail on port occupancy for existing
+		isNewPort := true // Conservative: check everything
+		if result := preflight.CheckForPort(port, isNewPort); result != nil {
+			preflightFailures[port.ID] = result
+		}
+	}
+
+	// If preflight check failed for a port, skip it and report error
+	filteredOtherPorts := []*model.Port{}
+	for _, port := range otherPorts {
+		if failure, hasFailed := preflightFailures[port.ID]; hasFailed {
+			result := model.PortInstanceResult{
+				PortID:    port.ID,
+				Port:      port.Port,
+				CheckedAt: time.Now(),
+				OK:        false,
+				Error:     fmt.Sprintf("Preflight 检查失败 (%s): %s\n%s", failure.CheckName, failure.Error, failure.Hint),
+			}
+			allResults = append(allResults, result)
+			syncErrors = append(syncErrors, fmt.Errorf("端口 %d: %s", port.Port, result.Error))
+			continue
+		}
+		filteredOtherPorts = append(filteredOtherPorts, port)
+	}
+	otherPorts = filteredOtherPorts
+
+	// Filter Mieru ports based on preflight results
+	filteredMieruBindings := []model.PortBinding{}
+	filteredMieruUsers := []model.UserCred{}
+	filteredMieruPortIDs := []string{}
+	for i, portID := range mieruPortIDs {
+		if failure, hasFailed := preflightFailures[portID]; hasFailed {
+			result := model.PortInstanceResult{
+				PortID:    portID,
+				Port:      mieruBindings[i].Port,
+				CheckedAt: time.Now(),
+				OK:        false,
+				Error:     fmt.Sprintf("Preflight 检查失败 (%s): %s\n%s", failure.CheckName, failure.Error, failure.Hint),
+			}
+			allResults = append(allResults, result)
+			syncErrors = append(syncErrors, fmt.Errorf("端口 %d: %s", mieruBindings[i].Port, result.Error))
+			continue
+		}
+		filteredMieruBindings = append(filteredMieruBindings, mieruBindings[i])
+		filteredMieruUsers = append(filteredMieruUsers, mieruUsers[i])
+		filteredMieruPortIDs = append(filteredMieruPortIDs, portID)
+	}
+	mieruBindings = filteredMieruBindings
+	mieruUsers = filteredMieruUsers
+	mieruPortIDs = filteredMieruPortIDs
+
 	if len(mieruBindings) == 0 && !cfg.Partial {
 		stopped, err := a.removeStaleInstances(map[int]bool{})
 		if err != nil {

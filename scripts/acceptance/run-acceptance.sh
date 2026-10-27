@@ -226,6 +226,22 @@ echo "Failed: $FAILED_CHECKS" | tee -a "$LOG_FILE"
 echo "Skipped: $SKIPPED_CHECKS" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
+# Determine overall status
+OVERALL_STATUS="pass"
+if [[ $FAILED_CHECKS -gt 0 ]]; then
+    OVERALL_STATUS="fail"
+elif [[ $PASSED_CHECKS -eq 0 ]] && [[ $FAILED_CHECKS -eq 0 ]]; then
+    # All checks were skipped - inconclusive
+    OVERALL_STATUS="inconclusive"
+    echo "⚠️  INCONCLUSIVE: No checks passed or failed (all skipped)" | tee -a "$LOG_FILE"
+    echo "" | tee -a "$LOG_FILE"
+    echo "Possible causes:" | tee -a "$LOG_FILE"
+    echo "  - UnifiedProxy not deployed on this machine" | tee -a "$LOG_FILE"
+    echo "  - Auto-discovery found no systemd units matching known prefixes" | tee -a "$LOG_FILE"
+    echo "  - Insufficient permissions to query service status" | tee -a "$LOG_FILE"
+    echo "" | tee -a "$LOG_FILE"
+fi
+
 # Generate JSON result
 if command -v jq >/dev/null 2>&1; then
     # Use jq to construct JSON safely
@@ -237,6 +253,7 @@ if command -v jq >/dev/null 2>&1; then
         --argjson skipped "$SKIPPED_CHECKS" \
         --argjson with_restart "$WITH_RESTART" \
         --argjson with_acme "$WITH_ACME_ISSUANCE" \
+        --arg overall "$OVERALL_STATUS" \
         '{
             timestamp: $timestamp,
             summary: {
@@ -245,6 +262,7 @@ if command -v jq >/dev/null 2>&1; then
                 failed: $failed,
                 skipped: $skipped
             },
+            overall: $overall,
             modes: {
                 with_restart: $with_restart,
                 with_acme_issuance: $with_acme
@@ -280,6 +298,7 @@ else
         echo "    \"failed\": $FAILED_CHECKS,"
         echo "    \"skipped\": $SKIPPED_CHECKS"
         echo "  },"
+        echo "  \"overall\": \"$OVERALL_STATUS\","
         echo "  \"modes\": {"
         echo "    \"with_restart\": $WITH_RESTART,"
         echo "    \"with_acme_issuance\": $WITH_ACME_ISSUANCE"
@@ -342,10 +361,13 @@ fi
 # Exit code
 if [[ $FAILED_CHECKS -gt 0 ]]; then
     echo "" | tee -a "$LOG_FILE"
-    echo "⚠️  Acceptance test FAILED ($FAILED_CHECKS failures)" | tee -a "$LOG_FILE"
+    echo "✗ Acceptance test FAILED ($FAILED_CHECKS failures)" | tee -a "$LOG_FILE"
     exit 1
+elif [[ "$OVERALL_STATUS" == "inconclusive" ]]; then
+    echo "⚠️  Acceptance test INCONCLUSIVE (no checks produced pass/fail results)" | tee -a "$LOG_FILE"
+    exit 2
 else
     echo "" | tee -a "$LOG_FILE"
-    echo "✓ Acceptance test PASSED (or skipped)" | tee -a "$LOG_FILE"
+    echo "✓ Acceptance test PASSED" | tee -a "$LOG_FILE"
     exit 0
 fi

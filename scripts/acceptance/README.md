@@ -129,8 +129,13 @@ bash run-acceptance.sh --log /path/to/custom.log --output /path/to/result.json
 - `SKIP` - 检查跳过（前置条件不满足），不视为失败
 
 ### 退出码
-- `0` - 所有检查通过或跳过
+- `0` - 所有检查通过（至少有一项 PASS）
 - `1` - 至少一个检查失败
+- `2` - INCONCLUSIVE：未得出结论（所有检查都 SKIP，没有任何 PASS 或 FAIL）
+  - 可能原因：
+    - 本机未部署 UnifiedProxy
+    - 自动发现未找到任何 systemd unit
+    - 权限不足无法查询服务状态
 
 ### 示例输出
 

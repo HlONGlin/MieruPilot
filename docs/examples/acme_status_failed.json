@@ -1,0 +1,12 @@
+{
+  "autoACME": true,
+  "hasCert": false,
+  "domain": "failed.example.com",
+  "expiryLevel": "unknown",
+  "expiryText": "等待 ACME 签发",
+  "acmeStatus": {
+    "status": "failed",
+    "lastEvent": "2026-10-27T16:32:57.9159571+08:00",
+    "lastError": "acme: authorization error for failed.example.com: 403 urn:ietf:params:acme:error:unauthorized: Invalid response from http://failed.example.com/.well-known/acme-challenge/xyz123: 404 Not Found"
+  }
+}

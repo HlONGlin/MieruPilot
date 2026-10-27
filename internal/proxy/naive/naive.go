@@ -95,10 +95,20 @@ func GenerateConfig(p *model.Port) (string, error) {
 	domain := strings.TrimSpace(p.Domain)
 	if p.AutoACME {
 		tlsApp["certificates"] = map[string]any{"automate": []string{domain}}
+
+		// Configure ACME issuer
+		issuer := map[string]any{"module": "acme"}
+		// Use Let's Encrypt staging CA when ACMEStaging is true.
+		// Staging certificates are NOT trusted by browsers or clients - they are only
+		// for testing the ACME flow (DNS propagation, port reachability, renewal).
+		if p.ACMEStaging {
+			issuer["ca"] = "https://acme-staging-v02.api.letsencrypt.org/directory"
+		}
+
 		tlsApp["automation"] = map[string]any{
 			"policies": []any{map[string]any{
 				"subjects": []string{domain},
-				"issuers":  []any{map[string]any{"module": "acme"}},
+				"issuers":  []any{issuer},
 			}},
 		}
 	} else {

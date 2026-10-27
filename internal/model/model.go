@@ -62,6 +62,7 @@ type Port struct {
 	Domain        string `json:"domain,omitempty"`        // Domain name for ACME or SNI
 	HandshakeAddr string `json:"handshakeAddr,omitempty"` // Handshake server for ShadowTLS
 	AutoACME      bool   `json:"autoACME,omitempty"`      // Enable automatic ACME certificate
+	ACMEStaging   bool   `json:"acmeStaging,omitempty"`   // Use Let's Encrypt staging CA (for testing)
 	// BackendAddr is the data server that ShadowTLS relays decrypted traffic to
 	// (for example a shadowsocks instance reachable at 127.0.0.1:8388).
 	BackendAddr string `json:"backendAddr,omitempty"`
@@ -74,6 +75,9 @@ type Port struct {
 	// then deploys a loopback-only shadowsocks server for it. A manually entered
 	// backend is never touched by the agent.
 	BackendManaged bool `json:"backendManaged,omitempty"`
+
+	// Runtime state (not persisted, populated from agent reports)
+	RuntimeACMEStatus *ACMEStatus `json:"-"` // Excludes from JSON marshaling
 }
 
 // NormalizeProxyType returns the effective proxy type of a port, defaulting to
@@ -262,11 +266,12 @@ type AgentStatus struct {
 }
 
 type PortInstanceStatus struct {
-	Port         int    `json:"port"`
-	Running      bool   `json:"running"`
-	Error        string `json:"error,omitempty"`
-	TrafficUsed  int64  `json:"trafficUsed,omitempty"`  // Traffic used since last report
-	TotalTraffic int64  `json:"totalTraffic,omitempty"` // Total accumulated traffic
+	Port         int         `json:"port"`
+	Running      bool        `json:"running"`
+	Error        string      `json:"error,omitempty"`
+	TrafficUsed  int64       `json:"trafficUsed,omitempty"`  // Traffic used since last report
+	TotalTraffic int64       `json:"totalTraffic,omitempty"` // Total accumulated traffic
+	ACMEStatus   *ACMEStatus `json:"acmeStatus,omitempty"`   // NaïveProxy ACME status (optional)
 }
 
 // TaskResult is the result of executing a Task.
@@ -301,3 +306,12 @@ type PortInstanceResult struct {
 	Error     string    `json:"error,omitempty"`
 	CheckedAt time.Time `json:"checkedAt"`
 }
+
+// ACMEStatus holds the last known ACME renewal status from systemd journal logs.
+type ACMEStatus struct {
+	Status       string    `json:"status"`                 // "success", "failed", "unknown"
+	LastEvent    time.Time `json:"lastEvent,omitempty"`    // Time of last ACME event
+	LastError    string    `json:"lastError,omitempty"`    // Last error message if failed
+	RenewalCount int       `json:"renewalCount,omitempty"` // Number of successful renewals observed
+}
+

@@ -1191,33 +1191,58 @@ func (s *Server) handleGetCertInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]any{
-		"autoACME": port.AutoACME,
-		"hasCert":  port.TLSCert != "",
-		"domain":   port.Domain,
+	response := s.buildCertStatus(n, port)
+	writeJSON(w, http.StatusOK, response)
+}
+
+// buildCertStatus constructs the full certificate lifecycle status.
+func (s *Server) buildCertStatus(n *model.Node, port *model.Port) CertStatusResponse {
+	resp := CertStatusResponse{
+		AutoACME:     port.AutoACME,
+		ACMEStaging:  port.ACMEStaging,
+		HasCert:      port.TLSCert != "",
+		Domain:       port.Domain,
+		ExpiryLevel:  CertExpiryUnknown,
+		ExpiryText:   "未知",
+		ACMEDisabled: !port.AutoACME,
 	}
 
 	if port.TLSCert != "" {
 		certInfo := extractCertInfo(port.TLSCert)
 		if certInfo != nil {
-			response["certInfo"] = certInfo
-
-			// 添加证书健康状态
-			if certInfo.DaysToExpire < 0 {
-				response["certStatus"] = "expired"
-				response["certStatusText"] = "已过期"
-			} else if certInfo.DaysToExpire < 7 {
-				response["certStatus"] = "expiring"
-				response["certStatusText"] = fmt.Sprintf("即将过期（%d天后）", certInfo.DaysToExpire)
-			} else {
-				response["certStatus"] = "valid"
-				response["certStatusText"] = fmt.Sprintf("有效（%d天后过期）", certInfo.DaysToExpire)
-			}
+			resp.CertInfo = certInfo
+			resp.ExpiryLevel, resp.ExpiryText = classifyCertExpiry(certInfo.DaysToExpire)
+		} else {
+			resp.ExpiryText = "证书解析失败"
 		}
+	} else if port.AutoACME {
+		resp.ExpiryText = "等待 ACME 签发"
+	} else {
+		resp.ExpiryText = "未配置证书"
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	// ACME status from agent reports (if available)
+	if port.RuntimeACMEStatus != nil {
+		resp.ACMEStatus = port.RuntimeACMEStatus
+	}
+
+	return resp
 }
+
+// classifyCertExpiry returns the urgency level and display text for a certificate.
+func classifyCertExpiry(daysToExpire int) (CertExpiryLevel, string) {
+	switch {
+	case daysToExpire < 0:
+		return CertExpiryExpired, fmt.Sprintf("已过期（%d 天前）", -daysToExpire)
+	case daysToExpire <= 7:
+		return CertExpiryCritical, fmt.Sprintf("即将过期（%d 天后）", daysToExpire)
+	case daysToExpire <= 30:
+		return CertExpiryWarning, fmt.Sprintf("即将过期（%d 天后）", daysToExpire)
+	default:
+		return CertExpiryValid, fmt.Sprintf("有效（%d 天后过期）", daysToExpire)
+	}
+}
+
 
 // handleTestNode 测试节点连通性
 func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
@@ -1278,6 +1303,31 @@ type CertInfo struct {
 	DaysToExpire int       `json:"daysToExpire"`
 	DNSNames     []string  `json:"dnsNames,omitempty"`
 }
+
+// CertExpiryLevel classifies how urgent a certificate renewal is.
+type CertExpiryLevel string
+
+const (
+	CertExpiryValid    CertExpiryLevel = "valid"    // > 30 days
+	CertExpiryWarning  CertExpiryLevel = "warning"  // 7-30 days
+	CertExpiryCritical CertExpiryLevel = "critical" // 0-7 days
+	CertExpiryExpired  CertExpiryLevel = "expired"  // < 0 days
+	CertExpiryUnknown  CertExpiryLevel = "unknown"  // No cert or parse error
+)
+
+// CertStatusResponse is the full certificate lifecycle status returned by the API.
+type CertStatusResponse struct {
+	AutoACME     bool              `json:"autoACME"`
+	ACMEStaging  bool              `json:"acmeStaging,omitempty"`
+	HasCert      bool              `json:"hasCert"`
+	Domain       string            `json:"domain"`
+	CertInfo     *CertInfo         `json:"certInfo,omitempty"`
+	ExpiryLevel  CertExpiryLevel   `json:"expiryLevel"`
+	ExpiryText   string            `json:"expiryText"`
+	ACMEStatus   *model.ACMEStatus `json:"acmeStatus,omitempty"`
+	ACMEDisabled bool              `json:"acmeDisabled,omitempty"` // True when AutoACME is off
+}
+
 
 // validateCertAndKey 验证证书和密钥的有效性
 // All certificate entry points use the same deployment checks, including PATCH.

@@ -169,7 +169,85 @@ func TestGenerateConfigAutoACME(t *testing.T) {
 	if !strings.Contains(raw, `"disable_redirects": true`) {
 		t.Fatal("per-port instances must not share the implicit HTTP redirect listener")
 	}
+
+	// Verify production CA is used by default (no explicit CA in issuer)
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		t.Fatalf("config is not valid JSON: %v", err)
+	}
+	issuer := getACMEIssuer(t, parsed)
+	if _, hasCA := issuer["ca"]; hasCA {
+		t.Errorf("production ACME should not specify explicit CA, got: %v", issuer)
+	}
 }
+
+func TestGenerateConfigACMEStaging(t *testing.T) {
+	port := &model.Port{
+		ID:          "p3",
+		Port:        443,
+		Domain:      "example.com",
+		Username:    "user",
+		Password:    "pass",
+		AutoACME:    true,
+		ACMEStaging: true,
+	}
+
+	raw, err := GenerateConfig(port)
+	if err != nil {
+		t.Fatalf("GenerateConfig() error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		t.Fatalf("config is not valid JSON: %v", err)
+	}
+
+	issuer := getACMEIssuer(t, parsed)
+	ca, ok := issuer["ca"].(string)
+	if !ok {
+		t.Fatalf("staging ACME issuer has no CA field: %v", issuer)
+	}
+	want := "https://acme-staging-v02.api.letsencrypt.org/directory"
+	if ca != want {
+		t.Errorf("staging CA = %q, want %q", ca, want)
+	}
+}
+
+// getACMEIssuer extracts the ACME issuer config from a parsed Caddy JSON config.
+func getACMEIssuer(t *testing.T, parsed map[string]any) map[string]any {
+	t.Helper()
+
+	apps, ok := parsed["apps"].(map[string]any)
+	if !ok {
+		t.Fatalf("config has no apps map")
+	}
+	tlsApp, ok := apps["tls"].(map[string]any)
+	if !ok {
+		t.Fatalf("config has no tls app")
+	}
+	automation, ok := tlsApp["automation"].(map[string]any)
+	if !ok {
+		t.Fatalf("tls app has no automation")
+	}
+	policies, ok := automation["policies"].([]any)
+	if !ok || len(policies) == 0 {
+		t.Fatalf("automation has no policies")
+	}
+	policy, ok := policies[0].(map[string]any)
+	if !ok {
+		t.Fatalf("policy is not an object")
+	}
+	issuers, ok := policy["issuers"].([]any)
+	if !ok || len(issuers) == 0 {
+		t.Fatalf("policy has no issuers")
+	}
+	issuer, ok := issuers[0].(map[string]any)
+	if !ok {
+		t.Fatalf("issuer is not an object")
+	}
+	return issuer
+}
+
 
 // loadFilesOf returns the single load_files entry of a config.
 func loadFilesOf(t *testing.T, parsed map[string]any) map[string]any {

@@ -311,6 +311,9 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 		return "", nil, fmt.Errorf("缺少配置")
 	}
 
+	// Initialize preflight checker
+	preflight := NewPreflightChecker()
+
 	// 分离不同代理类型的端口
 	mieruBindings := []model.PortBinding{}
 	mieruUsers := []model.UserCred{}
@@ -344,6 +347,64 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 
 	var allResults []model.PortInstanceResult
 	var syncErrors []error
+
+	// Run preflight checks for each port
+	preflightFailures := make(map[string]*PreflightResult)
+	for _, port := range cfg.Ports {
+		if port == nil {
+			continue
+		}
+		// Get unit name for this port
+		unitName := a.getUnitNameForPort(port)
+		if result := preflight.CheckForPort(port, unitName); result != nil {
+			preflightFailures[port.ID] = result
+		}
+	}
+
+	// If preflight check failed for a port, skip it and report error
+	filteredOtherPorts := []*model.Port{}
+	for _, port := range otherPorts {
+		if failure, hasFailed := preflightFailures[port.ID]; hasFailed {
+			result := model.PortInstanceResult{
+				PortID:    port.ID,
+				Port:      port.Port,
+				CheckedAt: time.Now(),
+				OK:        false,
+				Error:     fmt.Sprintf("Preflight 检查失败 (%s): %s\n%s", failure.CheckName, failure.Error, failure.Hint),
+			}
+			allResults = append(allResults, result)
+			syncErrors = append(syncErrors, fmt.Errorf("端口 %d: %s", port.Port, result.Error))
+			continue
+		}
+		filteredOtherPorts = append(filteredOtherPorts, port)
+	}
+	otherPorts = filteredOtherPorts
+
+	// Filter Mieru ports based on preflight results
+	filteredMieruBindings := []model.PortBinding{}
+	filteredMieruUsers := []model.UserCred{}
+	filteredMieruPortIDs := []string{}
+	for i, portID := range mieruPortIDs {
+		if failure, hasFailed := preflightFailures[portID]; hasFailed {
+			result := model.PortInstanceResult{
+				PortID:    portID,
+				Port:      mieruBindings[i].Port,
+				CheckedAt: time.Now(),
+				OK:        false,
+				Error:     fmt.Sprintf("Preflight 检查失败 (%s): %s\n%s", failure.CheckName, failure.Error, failure.Hint),
+			}
+			allResults = append(allResults, result)
+			syncErrors = append(syncErrors, fmt.Errorf("端口 %d: %s", mieruBindings[i].Port, result.Error))
+			continue
+		}
+		filteredMieruBindings = append(filteredMieruBindings, mieruBindings[i])
+		filteredMieruUsers = append(filteredMieruUsers, mieruUsers[i])
+		filteredMieruPortIDs = append(filteredMieruPortIDs, portID)
+	}
+	mieruBindings = filteredMieruBindings
+	mieruUsers = filteredMieruUsers
+	mieruPortIDs = filteredMieruPortIDs
+
 	if len(mieruBindings) == 0 && !cfg.Partial {
 		stopped, err := a.removeStaleInstances(map[int]bool{})
 		if err != nil {
@@ -780,6 +841,16 @@ func containsPort(ports []int, port int) bool {
 }
 
 func instanceUnit(port int, _ string) string { return fmt.Sprintf("%s%d", "merit-mita-", port) }
+
+// getUnitNameForPort returns the systemd unit name (without .service suffix) for a given port.
+// Returns empty string if unit name cannot be determined.
+func (a *Agent) getUnitNameForPort(port *model.Port) string {
+	proxyType := model.NormalizeProxyType(port.ProxyType)
+	if proxyType == model.ProxyTypeMieru {
+		return instanceUnit(port.Port, "")
+	}
+	return a.proxyServiceName(port)
+}
 
 func instanceService(unit, configPath string) string {
 	if configPath == "" {

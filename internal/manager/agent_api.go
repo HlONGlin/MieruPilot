@@ -80,6 +80,10 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 				if updatePortTraffic(p, instance.TotalTraffic, time.Now()) {
 					needsSync = true
 				}
+				// Update runtime ACME status from agent report
+				if instance.ACMEStatus != nil {
+					p.RuntimeACMEStatus = instance.ACMEStatus
+				}
 			}
 		}
 		n.SeenIP = ip

@@ -4,13 +4,13 @@
 
 ### Added
 
-- **Unified Preflight Dependency Checker**: Protocol and port-scoped dependency validation that fails early with actionable install commands for Debian/Ubuntu, RHEL/CentOS, and Arch Linux
-- **Certificate Lifecycle Visibility**: Expiry countdown with three-tier warnings (60d/30d/7d), ACME status & failure reason display, and per-port staging toggle for Let's Encrypt testing
-- **Production Acceptance Test Suite**: Read-only by default with explicit switches for active tests (`--mieru-tcp`, `--naiveproxy-http`), three-state conclusion (PASS/FAIL/INCONCLUSIVE), and structured exit codes (0/1/2) with JSON output
+- **Unified Preflight Dependency Checker**: Protocol and port-scoped dependency validation that fails early with actionable install commands for Debian/Ubuntu, RHEL/CentOS/Rocky, and Alpine
+- **Certificate Lifecycle Visibility**: Expiry countdown with three-tier warnings (30d/7d/0d), ACME status & failure reason display, and per-port staging toggle for Let's Encrypt testing
+- **Production Acceptance Test Suite**: Read-only by default with explicit switches for active tests (`--with-restart`, `--with-acme-issuance`), three-state conclusion (PASS/FAIL/INCONCLUSIVE), and structured exit codes (0/1/2) with JSON output
 
 ### Changed
 
-- **Port Conflict Detection**: Now uses instance identity (systemd unit MainPID) instead of process name matching; unknown occupants always block deployment (replaces previous warning-only behavior)
+- **Port Conflict Detection**: Now uses instance identity (systemd unit MainPID) instead of process name matching; unknown occupants always block deployment
 
 ### Known Limitations
 

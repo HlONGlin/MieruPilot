@@ -349,20 +349,14 @@ func (a *Agent) applyConfig(cfg *model.DesiredConfig) (string, []model.PortInsta
 	var syncErrors []error
 
 	// Run preflight checks for each port
-	// We determine if it's a "new port" by checking if we're adding it
-	// For simplicity, treat all ports in a sync task as potentially new
-	// The preflight logic will skip port availability check for existing ports (isNewPort=false)
-	// Caller should set isNewPort=true for actual new ports
 	preflightFailures := make(map[string]*PreflightResult)
 	for _, port := range cfg.Ports {
 		if port == nil {
 			continue
 		}
-		// For now, we conservatively check all ports as if they're new
-		// In practice, the caller would need to tell us which are truly new
-		// For this implementation, we'll do preflight on all but not fail on port occupancy for existing
-		isNewPort := true // Conservative: check everything
-		if result := preflight.CheckForPort(port, isNewPort); result != nil {
+		// Get unit name for this port
+		unitName := a.getUnitNameForPort(port)
+		if result := preflight.CheckForPort(port, unitName); result != nil {
 			preflightFailures[port.ID] = result
 		}
 	}
@@ -847,6 +841,16 @@ func containsPort(ports []int, port int) bool {
 }
 
 func instanceUnit(port int, _ string) string { return fmt.Sprintf("%s%d", "merit-mita-", port) }
+
+// getUnitNameForPort returns the systemd unit name (without .service suffix) for a given port.
+// Returns empty string if unit name cannot be determined.
+func (a *Agent) getUnitNameForPort(port *model.Port) string {
+	proxyType := model.NormalizeProxyType(port.ProxyType)
+	if proxyType == model.ProxyTypeMieru {
+		return instanceUnit(port.Port, "")
+	}
+	return a.proxyServiceName(port)
+}
 
 func instanceService(unit, configPath string) string {
 	if configPath == "" {

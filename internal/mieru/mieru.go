@@ -181,6 +181,12 @@ func ClientHost(n *model.Node) string {
 // precedence over the node name.
 func SimpleLink(n *model.Node, p *model.Port) string {
 	host := ClientHost(n)
+
+	// 无法确定地址时返回空字符串
+	if host == "" {
+		return ""
+	}
+
 	u := &url.URL{Scheme: "mierus", User: url.UserPassword(p.Username, p.Password), Host: host}
 	q := url.Values{}
 	q.Set("handshake-mode", model.DefaultHandshake)

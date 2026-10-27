@@ -116,6 +116,12 @@ func ServerArgs(p *model.Port) []string {
 // the backend data server, which is why the link only describes the transport.
 func SimpleLink(n *model.Node, p *model.Port) string {
 	host := hostOf(n)
+
+	// 无法确定地址时返回空字符串
+	if host == "" {
+		return ""
+	}
+
 	u := &url.URL{
 		Scheme:   "shadowtls",
 		User:     url.User(p.Password),

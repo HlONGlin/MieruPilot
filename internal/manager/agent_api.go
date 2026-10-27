@@ -9,6 +9,7 @@ import (
 
 	"merit/internal/model"
 	"merit/internal/traffic"
+	"merit/internal/version"
 )
 
 func agentKey(r *http.Request) string {
@@ -47,6 +48,21 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid body"})
 		return
 	}
+
+	// Check agent version compatibility
+	if st.AgentVersion != "" {
+		agentVer := version.ExtractVersionFromBuildInfo(st.AgentVersion)
+		managerVer := version.ExtractVersionFromBuildInfo(s.version)
+		if err := version.CheckAgentCompatibility(agentVer, managerVer); err != nil {
+			log.Printf("版本兼容性检查失败 [节点: %s]: %v", node.Name, err)
+			// Update node with compatibility warning but still accept the report
+			_, _ = s.store.Update(node.ID, func(n *model.Node) error {
+				n.LastError = err.Error()
+				return nil
+			})
+		}
+	}
+
 	firstRegister := !node.Registered
 	newAgentInstance := st.AgentID != "" && node.AgentID != st.AgentID
 	ip := st.PublicIP
@@ -65,7 +81,10 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		n.OS = st.OS
 		n.Arch = st.Arch
 		n.MitaRunning = st.MitaRunning
-		n.LastError = st.Error
+		// Only update LastError if there's an actual error from the agent
+		if st.Error != "" {
+			n.LastError = st.Error
+		}
 		for _, instance := range st.PortInstances {
 			for _, p := range n.Ports {
 				if p.Port != instance.Port {
@@ -108,7 +127,20 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 	} else if needsSync || firstRegister || managerRestarted || newAgentInstance {
 		s.enqueueSync(n)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+
+	// Return compatibility info to agent
+	response := map[string]any{
+		"ok":             true,
+		"managerVersion": s.version,
+	}
+	agentVer := version.ExtractVersionFromBuildInfo(st.AgentVersion)
+	managerVer := version.ExtractVersionFromBuildInfo(s.version)
+	if version.IsUpgradeRecommended(agentVer, managerVer) {
+		response["upgradeRecommended"] = true
+		response["message"] = "建议升级 Agent 到最新版本"
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleAgentPoll(w http.ResponseWriter, r *http.Request) {

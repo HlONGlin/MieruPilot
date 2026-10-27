@@ -90,6 +90,10 @@ func New(cfg Config) (*Server, error) {
 		_ = st.SetTasks(id, runtime.pending)
 	}
 	s.routes()
+
+	// Start certificate expiry monitoring (check every 6 hours)
+	go s.MonitorCertificates(6 * time.Hour)
+
 	return s, nil
 }
 
@@ -146,6 +150,7 @@ func (s *Server) routes() {
 
 	s.mux.Handle("GET "+p+"/api/proxy-types", s.auth(s.handleGetProxyTypes))
 	s.mux.Handle("GET "+p+"/api/settings", s.auth(s.handleSettings))
+	s.mux.Handle("GET "+p+"/api/certificates/expiring", s.auth(s.handleGetExpiringCertificates))
 	s.mux.Handle("GET "+p+"/api/audit", s.auth(s.handleAudit))
 	s.mux.Handle("GET "+p+"/api/backup", s.auth(s.handleBackup))
 	s.mux.Handle("POST "+p+"/api/backup/restore", s.auth(s.auditMutation(s.handleRestore)))

@@ -76,6 +76,12 @@ func ServerArgs(p *model.Port) []string {
 // SimpleLink builds an anytls://password@host:port sharing link.
 func SimpleLink(n *model.Node, p *model.Port) string {
 	host := hostOf(n)
+
+	// 无法确定地址时返回空字符串
+	if host == "" {
+		return ""
+	}
+
 	u := &url.URL{
 		Scheme: "anytls",
 		User:   url.User(p.Password),

@@ -8,7 +8,9 @@
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](go.mod)
 [![Release](https://img.shields.io/github/v/release/HlONGlin/UnifiedProxy)](https://github.com/HlONGlin/UnifiedProxy/releases)
 
-> **📢 v1.5.2 已发布** - 修复 5 项关键部署缺陷（含 NaïveProxy 认证错误），**强烈建议所有用户升级**。详见 [发布说明](dist/RELEASE_NOTES_v1.5.2.md) | [变更日志](CHANGELOG_v1.5.2.md)
+> **📢 v1.6.1 已发布** - 新增 Agent 版本兼容性检查和证书到期监控，提升生产可靠性。详见 [发布说明](docs/V1.6.1_IMPLEMENTATION.md)
+> 
+> **🛡️ 生产加固计划** - 查看 [生产加固路线图](docs/PRODUCTION_HARDENING_ROADMAP.md) 了解更多改进
 
 [特性](#-特性) • [快速开始](#-快速开始) • [架构](#-架构) • [使用指南](#-使用指南) • [开发](#-开发)
 
@@ -29,6 +31,8 @@
 - [流量管理](#-流量管理)
 - [自动更新](#-自动更新)
 - [常见问题](#-常见问题)
+- [验收测试](#-验收测试)
+- [生产加固](#-生产加固)
 - [与 Zelay 的区别](#-与-zelay-的区别)
 - [开发](#-开发)
 - [许可证](#-许可证)
@@ -743,6 +747,74 @@ Manager 支持 Linux/Windows/macOS。
 - 目录权限 `700`
 - 备份文件权限 `600`
 - Agent 部署命令会明确重启服务，确保加载新二进制
+
+---
+
+## 🧪 验收测试
+
+为确保多协议部署的可靠性,项目提供了自动化验收测试脚本。
+
+### 快速验收
+
+```bash
+cd scripts/acceptance
+
+# 1. 复制配置模板
+cp test_config.env.example test_config.env
+
+# 2. 编辑配置文件,填写节点信息
+nano test_config.env
+
+# 3. 运行快速测试 (~30 秒)
+./quick_check.sh
+```
+
+**测试覆盖**:
+- ✅ Mieru TCP/UDP 端口连通性
+- ✅ AnyTLS、ShadowTLS、NaïveProxy 端口连通性
+- ✅ NaïveProxy TLS 握手和证书验证
+- ✅ Manager API 健康检查
+- ✅ Clash 订阅生成
+
+**适用场景**:
+- 首次部署节点后的验收
+- 版本升级后的回归测试
+- 日常健康检查
+
+详见 [验收测试文档](scripts/acceptance/README.md)
+
+---
+
+## 🛡️ 生产加固
+
+项目提供了生产环境部署的加固建议和实施计划。
+
+### 关键改进
+
+**A 级 - 安全与关键体验**
+- AnyTLS 身份校验增强 (使用同域名证书)
+- 证书上传进度可视化
+
+**B 级 - 可观测性**
+- 证书到期监控和续期告警
+- 续期事件日志和面板展示
+
+**C 级 - 防御性保护**
+- Agent 版本检查和兼容性验证
+- 升级前自动快照和回滚能力
+
+**D 级 - 工具和辅助**
+- 一键回归测试脚本
+- 部署验收检查链
+
+查看完整计划: [生产加固路线图](docs/PRODUCTION_HARDENING_ROADMAP.md)
+
+### 相关文档
+
+- [协议部署审计与修复](docs/PROTOCOL_DEPLOYMENT_AUDIT_2026-10-27.md) - 已知问题和修复记录
+- [证书上传进度实施方案](docs/CERT_UPLOAD_PROGRESS.md) - UI/UX 改进设计
+- [WebDAV 云备份](docs/WEBDAV_BACKUP.md) - 配置备份功能
+- [订阅链接修复](docs/SUBSCRIPTION_LINK_FIX.md) - Clash 订阅优化
 
 ---
 

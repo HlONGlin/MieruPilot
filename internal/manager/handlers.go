@@ -17,6 +17,7 @@ import (
 	"merit/internal/model"
 	"merit/internal/proxy"
 	"merit/internal/updater"
+	"merit/internal/version"
 )
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -99,31 +100,58 @@ type nodeDTO struct {
 	SeenIP      string              `json:"seenIP"`
 	Deleting    bool                `json:"deleting"`
 	Egress      *model.EgressConfig `json:"egress,omitempty"`
+	// Version compatibility fields
+	VersionCompatible   bool   `json:"versionCompatible"`
+	UpgradeRecommended  bool   `json:"upgradeRecommended,omitempty"`
+	CompatibilityError  string `json:"compatibilityError,omitempty"`
 }
 
-func toDTO(n *model.Node) nodeDTO {
+func (s *Server) toDTO(n *model.Node) nodeDTO {
 	online := n.Registered && time.Since(n.LastSeen) < 90*time.Second
+
+	// Check version compatibility
+	versionCompatible := true
+	upgradeRecommended := false
+	compatibilityError := ""
+
+	if n.AgentVer != "" {
+		agentVer := version.ExtractVersionFromBuildInfo(n.AgentVer)
+		managerVer := version.ExtractVersionFromBuildInfo(s.version)
+
+		if err := version.CheckAgentCompatibility(agentVer, managerVer); err != nil {
+			versionCompatible = false
+			compatibilityError = err.Error()
+		}
+
+		if version.IsUpgradeRecommended(agentVer, managerVer) {
+			upgradeRecommended = true
+		}
+	}
+
 	return nodeDTO{
-		ID:          n.ID,
-		Name:        n.Name,
-		APIKey:      n.APIKey,
-		Address:     n.Address,
-		Domain:      n.Domain,
-		Remark:      n.Remark,
-		Ports:       n.Ports,
-		CreatedAt:   n.CreatedAt,
-		AgentVer:    n.AgentVer,
-		MitaVer:     n.MitaVer,
-		OS:          n.OS,
-		Arch:        n.Arch,
-		MitaRunning: n.MitaRunning,
-		Registered:  n.Registered,
-		Online:      online,
-		LastSeen:    n.LastSeen,
-		LastError:   n.LastError,
-		SeenIP:      n.SeenIP,
-		Deleting:    n.Deleting,
-		Egress:      egressDTO(n.Egress),
+		ID:                  n.ID,
+		Name:                n.Name,
+		APIKey:              n.APIKey,
+		Address:             n.Address,
+		Domain:              n.Domain,
+		Remark:              n.Remark,
+		Ports:               n.Ports,
+		CreatedAt:           n.CreatedAt,
+		AgentVer:            n.AgentVer,
+		MitaVer:             n.MitaVer,
+		OS:                  n.OS,
+		Arch:                n.Arch,
+		MitaRunning:         n.MitaRunning,
+		Registered:          n.Registered,
+		Online:              online,
+		LastSeen:            n.LastSeen,
+		LastError:           n.LastError,
+		SeenIP:              n.SeenIP,
+		Deleting:            n.Deleting,
+		Egress:              egressDTO(n.Egress),
+		VersionCompatible:   versionCompatible,
+		UpgradeRecommended:  upgradeRecommended,
+		CompatibilityError:  compatibilityError,
 	}
 }
 
@@ -204,7 +232,7 @@ func (s *Server) handlePutEgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.enqueueSync(n)
-	writeJSON(w, http.StatusOK, toDTO(n))
+	writeJSON(w, http.StatusOK, s.toDTO(n))
 }
 
 func (s *Server) handleTestEgress(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +367,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	nodes := s.store.Nodes()
 	out := make([]nodeDTO, 0, len(nodes))
 	for _, n := range nodes {
-		out = append(out, toDTO(n))
+		out = append(out, s.toDTO(n))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -370,7 +398,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, toDTO(n))
+	writeJSON(w, http.StatusOK, s.toDTO(n))
 }
 
 func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
@@ -379,7 +407,7 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "节点不存在"})
 		return
 	}
-	writeJSON(w, http.StatusOK, toDTO(n))
+	writeJSON(w, http.StatusOK, s.toDTO(n))
 }
 
 func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +440,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, toDTO(n))
+	writeJSON(w, http.StatusOK, s.toDTO(n))
 }
 
 func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
@@ -708,7 +736,7 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.enqueueSync(n)
-	writeJSON(w, http.StatusOK, toDTO(n))
+	writeJSON(w, http.StatusOK, s.toDTO(n))
 }
 
 // handleUploadCert 处理TLS证书上传（用于NaïveProxy）
@@ -909,9 +937,8 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 		Link      string `json:"link"`
 	}
 	out := []link{}
-	host := mieru.ClientHost(n)
 	for _, p := range n.Ports {
-		if !p.Enabled || host == "" {
+		if !p.Enabled {
 			continue
 		}
 
@@ -928,14 +955,18 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 			shareLink = s.generateProxyLink(n, p)
 		}
 
-		out = append(out, link{
-			ID:        p.ID,
-			Label:     p.Label,
-			Port:      p.Port,
-			Protocol:  p.Protocol,
-			ProxyType: proxyType,
-			Link:      shareLink,
-		})
+		// 只有在能够生成有效链接时才添加到列表
+		// 每个协议自行判断地址是否可用
+		if shareLink != "" {
+			out = append(out, link{
+				ID:        p.ID,
+				Label:     p.Label,
+				Port:      p.Port,
+				Protocol:  p.Protocol,
+				ProxyType: proxyType,
+				Link:      shareLink,
+			})
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1290,6 +1321,12 @@ func (s *Server) handleGetNodeConfig(w http.ResponseWriter, r *http.Request) {
 
 	config := s.GetNodeConfig(n)
 	writeJSON(w, http.StatusOK, config)
+}
+
+// handleGetExpiringCertificates returns all certificates that need attention
+func (s *Server) handleGetExpiringCertificates(w http.ResponseWriter, r *http.Request) {
+	checks := s.GetExpiringCertificates()
+	writeJSON(w, http.StatusOK, checks)
 }
 
 // --- Certificate helpers ----------------------------------------------------

@@ -149,6 +149,12 @@ func SimpleLink(n *model.Node, p *model.Port) string {
 			host = strings.TrimSpace(n.SeenIP)
 		}
 	}
+
+	// 无法确定地址时返回空字符串
+	if host == "" {
+		return ""
+	}
+
 	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
 		host = "[" + host + "]"
 	}

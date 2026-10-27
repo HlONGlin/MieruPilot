@@ -440,7 +440,8 @@
           <div class="field"><label id="portRangeLabel">端口（1025-65535）</label><input name="port" type="number" min="1025" max="65535" placeholder="23456" required autofocus></div>
           <div class="field"><label>协议</label><select name="protocol"><option>TCP</option><option>UDP</option></select></div>
           <div class="field"><label>标签（可选）</label><input name="label" placeholder="例如 香港-1"></div>
-          <div id="naiveFields" style="display:none">
+          <div id="anytlsFields" style="display:none"><div class="field"><label>TLS 握手域名（SNI，可选）</label><input name="anytlsSNI" placeholder="例如 www.cloudflare.com"></div><div class="field"><label>TLS 指纹</label><select name="tlsFingerprint"><option value="chrome">Chrome</option><option value="firefox">Firefox</option></select></div></div>
+          <div id="naiveFields" style="display:none"><div class="field"><label>客户端传输</label><select name="naiveTransport"><option value="https">HTTPS / TCP</option><option value="quic">QUIC / UDP（需放行同端口 UDP）</option></select></div>
             <div class="field"><label>域名</label><input name="domain" placeholder="example.com"></div>
             <div class="field"><label><input type="checkbox" name="autoACME" checked> 自动申请证书（ACME）</label></div>
             <div id="manualCertFields" style="display:none">
@@ -466,11 +467,14 @@
 
             if (proxyType === "naive") {
               payload.domain = f.get("domain");
+              payload.naiveTransport = f.get("naiveTransport");
               payload.autoACME = f.get("autoACME") === "on";
               if (!payload.autoACME) {
                 payload.tlsCert = f.get("tlsCert");
                 payload.tlsKey = f.get("tlsKey");
               }
+            } else if (proxyType === "anytls") {
+              payload.domain = f.get("anytlsSNI"); payload.tlsFingerprint = f.get("tlsFingerprint");
             } else if (proxyType === "shadowtls") {
               payload.handshakeAddr = f.get("handshakeAddr");
               payload.backendAddr = f.get("backendAddr");
@@ -498,6 +502,7 @@
         const protocolInput = form.querySelector('[name="protocol"]');
         typeInput.onchange = () => {
           const type = typeInput.value;
+          form.querySelector('#anytlsFields').style.display = type === 'anytls' ? 'block' : 'none';
           form.querySelector('#naiveFields').style.display = type === 'naive' ? 'block' : 'none';
           form.querySelector('#shadowtlsFields').style.display = type === 'shadowtls' ? 'block' : 'none';
           form.querySelector('[name="domain"]').required = type === 'naive';
@@ -686,6 +691,9 @@
             const action = x.value;
             x.value = "";
             switch (action) {
+              case "details": showPortDetails(id); break;
+              case "test": testPortConnectivity(id); break;
+              case "edit": editPortInfo(id); break;
               case "traffic":
                 manageTraffic(id);
                 break;
@@ -705,6 +713,60 @@
           };
         });
       }
+
+      function clientHelp(p) {
+        const type = p.proxyType || 'mieru';
+        return {mieru:'使用 mierus 链接或 mihomo YAML。',anytls:'v2rayN 使用支持 AnyTLS 的 sing-box 内核；分享链接包含 SNI、TLS 指纹和自签证书参数。修改后请重新导入。',naive:'使用 naive+https 或 naive+quic 链接；v2rayN 需要安装 NaïveProxy 内核。QUIC 需服务端同端口 UDP 可达；证书仍严格校验。',shadowtls:'请下载完整 sing-box JSON，在 v2rayN 中添加自定义配置并选择 sing-box 内核，或导入 mihomo YAML。独立 shadowtls:// 链接缺少后端 Shadowsocks 账号。'}[type] || '';
+      }
+      async function downloadPortClient(id) {
+        const response = await fetch(url('/api/nodes/'+state.node.id+'/ports/'+id+'/client.json'));
+        if (!response.ok) { const error=await response.json(); throw new Error(error.error || '下载失败'); }
+        const blob=await response.blob(),href=URL.createObjectURL(blob),a=document.createElement('a');
+        a.href=href;a.download='merit-'+id+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(href),1000);
+      }
+      function showPortDetails(id) {
+        const p=state.node.ports.find(x=>x.id===id);if(!p)return;
+        const link=state.links.find(x=>x.id===id)?.link || '';
+        const fields=[['节点',state.node.name],['地址',state.node.address || state.node.domain],['代理类型',p.proxyType || 'mieru'],['端口 / 传输',p.port+' / '+p.protocol],['标签',p.label],['用户名',p.username],['密码',p.password],['同步状态',p.instanceRunning?'运行中':'未运行'],['最近同步',p.instanceSyncedAt],['同步错误',p.instanceError],['域名 / SNI',p.domain],['TLS 指纹',p.proxyType==='anytls'?(p.tlsFingerprint || 'chrome'):''],['客户端传输',p.proxyType==='naive'?(p.naiveTransport || 'https'):''],['握手服务器',p.handshakeAddr],['后端地址',p.backendAddr],['后端加密',p.backendCipher],['后端密码',p.backendPassword]];
+        modal('端口详细信息', '<p class="muted">'+esc(clientHelp(p))+'</p>'+fields.filter(x=>x[1]).map(x=>'<div class="field"><label>'+esc(x[0])+'</label><input readonly value="'+esc(x[1])+'"></div>').join('')+'<div class="field"><label>分享链接</label><textarea readonly rows="3">'+esc(link)+'</textarea></div>'+((p.proxyType && p.proxyType!=='mieru')?'<button type="button" class="btn" data-export-port>下载完整客户端 JSON</button>':''),async()=>{},form=>{form.querySelector('[data-export-port]')?.addEventListener('click',()=>downloadPortClient(id).catch(e=>toast(e.message)));});
+      }
+      async function testPortConnectivity(id) {
+        const nodeID=state.node.id,p=state.node.ports.find(x=>x.id===id);if(!p)return;
+        modal('测试联通性', '<div data-port-test-result role="status">正在从管理机检测端口、证书和代理 HTTPS 转发…</div>',async()=>{});
+        const target=modalEl.querySelector('[data-port-test-result]');
+        try {
+          const r=await api('POST','/api/nodes/'+nodeID+'/ports/'+id+'/test');
+          const lines=[r.protocolVerified?'代理认证和 HTTPS 转发成功':r.status==='reachable'?'监听端口可达，协议转发尚未验证':r.status==='unknown'?'需要协议客户端验证':'检测失败'];
+          if(r.tcpChecked)lines.push('TCP：'+(r.tcpConnectable?'可达':'不可达'));
+          if(r.serviceStatusKnown)lines.push('节点服务：'+(r.serviceRunning?'运行中':'未运行'));
+          if(r.tlsValid)lines.push('TLS 证书：'+(r.tlsValid.valid?'有效':r.tlsValid.error));
+          if(r.proxyTest?.reachable)lines.push('出口 IP：'+r.proxyTest.exitIP+' · '+r.proxyTest.latency+' ms');
+          lines.push(...(r.errors || []));
+          if(!r.protocolVerified)lines.push(...(r.warnings || []));
+          target.textContent=lines.join('\n');target.style.whiteSpace='pre-wrap';
+        } catch(e) {target.textContent='检测失败：'+e.message;}
+      }
+      function editPortInfo(id) {
+        const n=state.node,p=n.ports.find(x=>x.id===id);if(!p)return;
+        const type=p.proxyType || 'mieru';
+        const field=(label,name,value,kind='text')=>'<div class="field"><label>'+esc(label)+'</label><input type="'+kind+'" name="'+name+'" value="'+esc(value || '')+'"></div>';
+        let body='<p class="muted">'+esc(clientHelp(p))+'</p>'+field('标签','label',p.label)+field('监听端口','port',p.port,'number')+'<div class="field"><label>传输协议</label><select name="protocol" '+(type==='mieru'?'':'disabled')+'><option '+(p.protocol==='TCP'?'selected':'')+'>TCP</option><option '+(p.protocol==='UDP'?'selected':'')+'>UDP</option></select></div>';
+        if(type==='mieru' || type==='naive')body+=field('用户名','username',p.username);
+        body+=field('新密码（留空保留）','password','','password');
+        if(type==='anytls')body+=field('TLS 握手域名（SNI）','domain',p.domain)+'<div class="field"><label>TLS 指纹</label><select name="tlsFingerprint"><option value="chrome" '+((p.tlsFingerprint || 'chrome')==='chrome'?'selected':'')+'>Chrome</option><option value="firefox" '+(p.tlsFingerprint==='firefox'?'selected':'')+'>Firefox</option></select></div>';
+        if(type==='naive')body+='<div class="field"><label>客户端传输</label><select name="naiveTransport"><option value="https" '+((p.naiveTransport || 'https')==='https'?'selected':'')+'>HTTPS / TCP</option><option value="quic" '+(p.naiveTransport==='quic'?'selected':'')+'>QUIC / UDP（需放行同端口 UDP）</option></select></div>'+field('证书域名','domain',p.domain)+'<div class="field"><label><input name="autoACME" type="checkbox" '+(p.autoACME?'checked':'')+'> 自动申请证书（ACME，监听 443）</label></div><div id="manualCertFields"><div class="field"><label>TLS 证书</label><textarea name="tlsCert" rows="4">'+esc(p.tlsCert || '')+'</textarea></div><div class="field"><label>TLS 私钥</label><textarea name="tlsKey" rows="4">'+esc(p.tlsKey || '')+'</textarea></div></div>';
+        if(type==='shadowtls')body+=field('TLS 握手服务器','handshakeAddr',p.handshakeAddr || 'cloudflare.com:443')+field('后端地址（留空自动部署）','backendAddr',p.backendAddr)+field('后端密码（留空保留）','backendPassword','','password')+field('后端加密方式','backendCipher',p.backendCipher || 'aes-256-gcm');
+        modal('编辑端口信息',body,async f=>{
+          const payload={label:f.get('label'),port:Number(f.get('port')),protocol:type==='mieru'?f.get('protocol'):'TCP'};
+          if(!Number.isInteger(payload.port)||payload.port<(type==='mieru'?1025:1)||payload.port>65535)throw new Error('监听端口超出范围');
+          if(f.has('username'))payload.username=f.get('username');if(f.get('password'))payload.password=f.get('password');
+          if(type==='anytls'){payload.domain=f.get('domain');payload.tlsFingerprint=f.get('tlsFingerprint');}
+          if(type==='naive'){payload.naiveTransport=f.get('naiveTransport');payload.domain=f.get('domain');payload.autoACME=f.get('autoACME')==='on';if(!payload.autoACME){payload.tlsCert=f.get('tlsCert');payload.tlsKey=f.get('tlsKey');}}
+          if(type==='shadowtls'){payload.handshakeAddr=f.get('handshakeAddr');payload.backendAddr=f.get('backendAddr');payload.backendCipher=f.get('backendCipher');if(f.get('backendPassword'))payload.backendPassword=f.get('backendPassword');}
+          await api('PATCH','/api/nodes/'+n.id+'/ports/'+id,payload);toast('信息已保存并下发同步');await renderDetail();
+        },form=>{if(type==='naive')bindCertificateForm(form);form.querySelector('[name="port"]').required=true;});
+      }
+
       function editNode() {
         const n = state.node;
         modal(
@@ -876,7 +938,7 @@
          const traffic = proxyType !== 'mieru' ? '暂不支持流量统计' : (p.trafficLimit ? `${formatTraffic(p.trafficUsed || 0)} / ${formatTraffic(p.trafficLimit)} (${Math.min(100, Math.round((p.trafficUsed || 0) / p.trafficLimit * 100))}%)` : `已用 ${formatTraffic(p.trafficUsed || 0)} / 不限`);
          const proxyIcon = {mieru: '🚀', naive: '🌐', anytls: '🔐', shadowtls: '🔒'}[proxyType] || '🔧';
          const proxyName = {mieru: 'Mieru', naive: 'NaïveProxy', anytls: 'AnyTLS', shadowtls: 'ShadowTLS'}[proxyType] || proxyType;
-         return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span> <span class="pill" title="${esc(proxyName)}">${proxyIcon}</span></td><td>${esc(p.label || "—")}</td><td><span class="traffic-cell">${esc(traffic)}${proxyType === 'mieru' && p.autoDisabled ? " · 已超限停用" : ""}</span></td><td>${portStatus(p)}</td><td><div class="port-actions"><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><select class="port-actions-menu" aria-label="端口 ${p.port} 更多操作" data-port-actions="${esc(p.id)}"><option value="">更多操作</option>${proxyType === 'mieru' ? '<option value="traffic">流量设置</option>' : ''}<option value="retry" ${p.enabled ? "" : "disabled"}>重试同步</option><option value="regenerate">重置账号</option>${proxyType === 'naive' ? '<option value="uploadCert">上传证书</option>' : ''}<option value="delete">删除</option></select></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="6" class="port-detail"><div class="port-detail-title">${proxyIcon} ${esc(proxyName)} 链接</div><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制链接</button>` : ""}</div>${proxyType === 'naive' ? `<div class="muted" style="margin-top:8px">域名: ${esc(p.domain || '未设置')} · 证书: ${p.autoACME ? '自动(ACME)' : (p.tlsCert ? '已上传' : '未配置')}</div>` : ''}${proxyType === 'shadowtls' ? `<div class="muted" style="margin-top:8px">独立 ShadowTLS 链接不含后端账号，请优先使用下方 mihomo 订阅。握手服务器: ${esc(p.handshakeAddr || 'cloudflare.com:443')} · 后端服务: ${esc(p.backendAddr || '未配置')} · 后端密码: ${p.backendPassword ? '已配置' : '未配置（Clash 订阅会跳过该端口）'}</div>` : ''}<div class="port-detail-title" style="margin-top:12px">Clash / mihomo 单节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
+         return `<tr><td><code>${p.port}</code></td><td><span class="pill">${esc(p.protocol)}</span> <span class="pill" title="${esc(proxyName)}">${proxyIcon}</span></td><td>${esc(p.label || "—")}</td><td><span class="traffic-cell">${esc(traffic)}${proxyType === 'mieru' && p.autoDisabled ? " · 已超限停用" : ""}</span></td><td>${portStatus(p)}</td><td><div class="port-actions"><button type="button" class="btn small" data-expand-port="${p.id}" data-target="${detailID}">展开</button><button type="button" class="btn small" data-toggle-port="${p.id}">${p.enabled ? "停用" : "启用"}</button><select class="port-actions-menu" aria-label="端口 ${p.port} 更多操作" data-port-actions="${esc(p.id)}"><option value="">更多操作</option><option value="details">详细信息</option><option value="test">测试联通性</option><option value="edit">编辑信息</option>${proxyType === 'mieru' ? '<option value="traffic">流量设置</option>' : ''}<option value="retry" ${p.enabled ? "" : "disabled"}>重试同步</option><option value="regenerate">重置账号</option>${proxyType === 'naive' ? '<option value="uploadCert">上传证书</option>' : ''}<option value="delete">删除</option></select></div></td></tr><tr id="${detailID}" class="port-detail-row"><td colspan="6" class="port-detail"><div class="port-detail-title">${proxyIcon} ${esc(proxyName)} 链接</div><p class="muted">${esc(clientHelp(p))}</p><div class="command"><code>${esc(link || "节点地址未设置，暂时无法生成链接")}</code>${link ? `<button type="button" class="btn small" data-copy="${esc(link)}">复制链接</button>` : ""}</div>${proxyType === 'naive' ? `<div class="muted" style="margin-top:8px">域名: ${esc(p.domain || '未设置')} · 证书: ${p.autoACME ? '自动(ACME)' : (p.tlsCert ? '已上传' : '未配置')}</div>` : ''}${proxyType === 'shadowtls' ? `<div class="muted" style="margin-top:8px">独立 ShadowTLS 链接不含后端账号，请优先使用下方 mihomo 订阅。握手服务器: ${esc(p.handshakeAddr || 'cloudflare.com:443')} · 后端服务: ${esc(p.backendAddr || '未配置')} · 后端密码: ${p.backendPassword ? '已配置' : '未配置（Clash 订阅会跳过该端口）'}</div>` : ''}<div class="port-detail-title" style="margin-top:12px">Clash / mihomo 节点 YAML</div><div class="command"><code>${esc(clashURL)}</code><button type="button" class="btn small" data-copy="${esc(clashURL)}">复制地址</button><button type="button" class="btn small" data-download-clash>下载 YAML</button></div></td></tr>`;
       }
       function detailView(n, install, links) {
         n = n && typeof n === "object" ? n : {};
@@ -893,7 +955,7 @@
           notice = n.deleting
            ? `<div class="panel" style="border-color:var(--red)"><p style="margin:0">正在清理远程 Agent、所有 mita 端口与账号，清理完成后节点会自动从面板移除。若目标机已离线且无法恢复，可强制移除记录。</p>${n.lastError ? `<p class="muted" style="margin:8px 0 0;color:var(--red)">${esc(n.lastError)}</p>` : ""}${String(n.lastError || "").includes("版本过旧") ? `<p style="margin:12px 0 0">请复制上方最新部署命令，在目标机重新执行。Agent 更新后会自动继续清理。</p>` : ""}</div>`
             : "";
-        return `<button type="button" class="back" data-back>← 返回节点总览</button><div class="page-head"><div><h2>${esc(n.name)} <span class="state ${cl}">${st}</span></h2><p>${esc(n.address || n.seenIP || "等待 Agent 上线")} · 最后在线 ${ago(n.lastSeen)}</p></div><div class="toolbar">${actions}</div></div>${notice}${healthPanel(n)}<div class="panel"><div class="panel-head"><h3>① 部署 Agent</h3><span class="muted">在目标服务器以 root 执行</span></div><div class="command"><code>${esc(install.command || "部署命令暂不可用")}</code><button type="button" class="btn" data-copy="${esc(install.command || "")}">复制命令</button></div><div class="form-row" style="margin-top:16px"><div class="field"><label>公网 IP / 地址</label><input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || "自动探测")}"></div><div class="field"><label>域名（可选）</label><input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div><button type="button" class="btn primary" data-save-node>保存节点信息</button></div><p class="muted" style="font-size:12px;margin:12px 0 0">系统：${esc(n.os || "—")} · 架构：${esc(n.arch || "—")} · mita：${esc(n.mitaVer || "—")} · Agent：${esc(n.agentVer || "—")}</p></div><div class="panel"><div class="panel-head"><h3>② 代理入口</h3><span class="muted">展开可复制 Mieru 链接或导出 Clash 配置</span><button type="button" class="btn primary" data-add-port>＋ 生成端口</button></div>${
+        return `<button type="button" class="back" data-back>← 返回节点总览</button><div class="page-head"><div><h2>${esc(n.name)} <span class="state ${cl}">${st}</span></h2><p>${esc(n.address || n.seenIP || "等待 Agent 上线")} · 最后在线 ${ago(n.lastSeen)}</p></div><div class="toolbar">${actions}</div></div>${notice}${healthPanel(n)}<div class="panel"><div class="panel-head"><h3>① 部署 Agent</h3><span class="muted">在目标服务器以 root 执行</span></div><div class="command"><code>${esc(install.command || "部署命令暂不可用")}</code><button type="button" class="btn" data-copy="${esc(install.command || "")}">复制命令</button></div><div class="form-row" style="margin-top:16px"><div class="field"><label>公网 IP / 地址</label><input id="address" value="${esc(n.address)}" placeholder="${esc(n.seenIP || "自动探测")}"></div><div class="field"><label>域名（可选）</label><input id="domain" value="${esc(n.domain)}" placeholder="proxy.example.com"></div><button type="button" class="btn primary" data-save-node>保存节点信息</button></div><p class="muted" style="font-size:12px;margin:12px 0 0">系统：${esc(n.os || "—")} · 架构：${esc(n.arch || "—")} · mita：${esc(n.mitaVer || "—")} · Agent：${esc(n.agentVer || "—")}</p></div><div class="panel"><div class="panel-head"><h3>② 代理入口</h3><span class="muted">更多操作可查看详情、测试联通性、编辑信息</span><button type="button" class="btn primary" data-add-port>＋ 生成端口</button></div>${
           ports.length
              ? `<div class="table-wrap"><table class="port-table"><thead><tr><th>端口</th><th>协议</th><th>标签</th><th>流量</th><th>状态</th><th>操作</th></tr></thead><tbody>${arrayOf(
                 ports,

@@ -47,6 +47,9 @@ func Validate(p *model.Port) error {
 	if p == nil {
 		return fmt.Errorf("端口配置为空")
 	}
+	if transport := p.EffectiveNaiveTransport(); transport != "https" && transport != "quic" {
+		return fmt.Errorf("NaïveProxy 客户端传输必须是 https 或 quic")
+	}
 	if strings.TrimSpace(p.Domain) == "" {
 		return fmt.Errorf("NaïveProxy 需要域名：TLS 证书必须与客户端访问的域名匹配")
 	}
@@ -160,7 +163,7 @@ func SimpleLink(n *model.Node, p *model.Port) string {
 	}
 
 	u := &url.URL{
-		Scheme: "naive+https",
+		Scheme: "naive+" + p.EffectiveNaiveTransport(),
 		User:   url.UserPassword(p.Username, p.Password),
 		Host:   fmt.Sprintf("%s:%d", host, p.Port),
 	}

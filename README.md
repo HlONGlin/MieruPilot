@@ -50,6 +50,8 @@
 - ✅ **AnyTLS** - 通用 TLS 代理协议
 - ✅ **ShadowTLS v3** - 将流量伪装成 TLS 的代理协议
 
+详细信息、联通性测试、客户端 JSON 导出及 AnyTLS / NaïveProxy 传输参数见 [客户端配置指南](docs/CLIENT_CONFIGURATION.md)。
+
 ### 协议部署条件
 
 | 协议 | 监听端口 | 证书和依赖 | 客户端 |

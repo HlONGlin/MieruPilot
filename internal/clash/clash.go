@@ -25,8 +25,9 @@ type Entry struct {
 	TLS    bool
 
 	// ShadowTLS specific
-	HandshakeAddr string
-	SNI           string
+	HandshakeAddr  string
+	TLSFingerprint string
+	SNI            string
 	// Backend is the shadowsocks data server behind ShadowTLS. mihomo needs its
 	// credentials, because ShadowTLS itself carries no authentication.
 	BackendPassword string
@@ -80,6 +81,9 @@ func BuildEntries(n *model.Node) []Entry {
 
 		// Add proxy-specific fields
 		switch proxyType {
+		case model.ProxyTypeAnyTLS:
+			entry.SNI = p.Domain
+			entry.TLSFingerprint = p.EffectiveTLSFingerprint()
 		case model.ProxyTypeNaive:
 			// mihomo has no NaiveProxy outbound; skipping keeps the generated
 			// subscription valid instead of shipping a proxy that cannot work.
@@ -218,7 +222,11 @@ func renderProxyEntry(e Entry) string {
 		b.WriteString(fmt.Sprintf("    server: %s\n", yamlString(e.Server)))
 		b.WriteString(fmt.Sprintf("    port: %d\n", e.Port))
 		b.WriteString(fmt.Sprintf("    password: %s\n", yamlString(e.Password)))
-		b.WriteString("    client-fingerprint: chrome\n")
+		fingerprint := e.TLSFingerprint
+		if fingerprint == "" {
+			fingerprint = "chrome"
+		}
+		b.WriteString(fmt.Sprintf("    client-fingerprint: %s\n", yamlString(fingerprint)))
 		b.WriteString("    udp: true\n")
 		// The managed anytls-go server uses an ephemeral self-signed certificate.
 		b.WriteString("    skip-cert-verify: true\n")

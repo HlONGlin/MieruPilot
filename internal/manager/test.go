@@ -41,20 +41,21 @@ type ProxyTestResult struct {
 
 // PortTestResult 端口详细测试结果
 type PortTestResult struct {
-	Status             string         `json:"status"`
-	TCPChecked         bool           `json:"tcpChecked"`
-	UDPStatus          string         `json:"udpStatus,omitempty"`
-	Warnings           []string       `json:"warnings,omitempty"`
-	ProtocolVerified   bool           `json:"protocolVerified"`
-	ServiceStatusKnown bool           `json:"serviceStatusKnown"`
-	PortID             string         `json:"portId"`
-	Port               int            `json:"port"`
-	ProxyType          string         `json:"proxyType"`
-	TCPConnectable     bool           `json:"tcpConnectable"`
-	UDPReachable       bool           `json:"udpReachable,omitempty"`
-	TLSValid           *TLSTestResult `json:"tlsValid,omitempty"` // TLS证书验证（NaïveProxy）
-	ServiceRunning     bool           `json:"serviceRunning"`     // 服务是否运行
-	Errors             []string       `json:"errors,omitempty"`
+	ProxyTest          *ProxyTestResult `json:"proxyTest,omitempty"`
+	Status             string           `json:"status"`
+	TCPChecked         bool             `json:"tcpChecked"`
+	UDPStatus          string           `json:"udpStatus,omitempty"`
+	Warnings           []string         `json:"warnings,omitempty"`
+	ProtocolVerified   bool             `json:"protocolVerified"`
+	ServiceStatusKnown bool             `json:"serviceStatusKnown"`
+	PortID             string           `json:"portId"`
+	Port               int              `json:"port"`
+	ProxyType          string           `json:"proxyType"`
+	TCPConnectable     bool             `json:"tcpConnectable"`
+	UDPReachable       bool             `json:"udpReachable,omitempty"`
+	TLSValid           *TLSTestResult   `json:"tlsValid,omitempty"` // TLS证书验证（NaïveProxy）
+	ServiceRunning     bool             `json:"serviceRunning"`     // 服务是否运行
+	Errors             []string         `json:"errors,omitempty"`
 }
 
 // TLSTestResult TLS证书测试

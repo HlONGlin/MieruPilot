@@ -101,9 +101,9 @@ type nodeDTO struct {
 	Deleting    bool                `json:"deleting"`
 	Egress      *model.EgressConfig `json:"egress,omitempty"`
 	// Version compatibility fields
-	VersionCompatible   bool   `json:"versionCompatible"`
-	UpgradeRecommended  bool   `json:"upgradeRecommended,omitempty"`
-	CompatibilityError  string `json:"compatibilityError,omitempty"`
+	VersionCompatible  bool   `json:"versionCompatible"`
+	UpgradeRecommended bool   `json:"upgradeRecommended,omitempty"`
+	CompatibilityError string `json:"compatibilityError,omitempty"`
 }
 
 func (s *Server) toDTO(n *model.Node) nodeDTO {
@@ -129,29 +129,29 @@ func (s *Server) toDTO(n *model.Node) nodeDTO {
 	}
 
 	return nodeDTO{
-		ID:                  n.ID,
-		Name:                n.Name,
-		APIKey:              n.APIKey,
-		Address:             n.Address,
-		Domain:              n.Domain,
-		Remark:              n.Remark,
-		Ports:               n.Ports,
-		CreatedAt:           n.CreatedAt,
-		AgentVer:            n.AgentVer,
-		MitaVer:             n.MitaVer,
-		OS:                  n.OS,
-		Arch:                n.Arch,
-		MitaRunning:         n.MitaRunning,
-		Registered:          n.Registered,
-		Online:              online,
-		LastSeen:            n.LastSeen,
-		LastError:           n.LastError,
-		SeenIP:              n.SeenIP,
-		Deleting:            n.Deleting,
-		Egress:              egressDTO(n.Egress),
-		VersionCompatible:   versionCompatible,
-		UpgradeRecommended:  upgradeRecommended,
-		CompatibilityError:  compatibilityError,
+		ID:                 n.ID,
+		Name:               n.Name,
+		APIKey:             n.APIKey,
+		Address:            n.Address,
+		Domain:             n.Domain,
+		Remark:             n.Remark,
+		Ports:              n.Ports,
+		CreatedAt:          n.CreatedAt,
+		AgentVer:           n.AgentVer,
+		MitaVer:            n.MitaVer,
+		OS:                 n.OS,
+		Arch:               n.Arch,
+		MitaRunning:        n.MitaRunning,
+		Registered:         n.Registered,
+		Online:             online,
+		LastSeen:           n.LastSeen,
+		LastError:          n.LastError,
+		SeenIP:             n.SeenIP,
+		Deleting:           n.Deleting,
+		Egress:             egressDTO(n.Egress),
+		VersionCompatible:  versionCompatible,
+		UpgradeRecommended: upgradeRecommended,
+		CompatibilityError: compatibilityError,
 	}
 }
 
@@ -496,6 +496,8 @@ func (s *Server) handleAddPort(w http.ResponseWriter, r *http.Request) {
 		Port            int    `json:"port"`
 		Protocol        string `json:"protocol"`
 		ProxyType       string `json:"proxyType"`
+		TLSFingerprint  string `json:"tlsFingerprint"`
+		NaiveTransport  string `json:"naiveTransport"`
 		Label           string `json:"label"`
 		Domain          string `json:"domain"`
 		AutoACME        bool   `json:"autoACME"`
@@ -551,8 +553,12 @@ func (s *Server) handleAddPort(w http.ResponseWriter, r *http.Request) {
 
 		p := mieru.NewPortWithType(req.Port, proto, strings.TrimSpace(req.Label), proxyType)
 
+		p.TLSFingerprint = strings.ToLower(strings.TrimSpace(req.TLSFingerprint))
+		p.NaiveTransport = strings.ToLower(strings.TrimSpace(req.NaiveTransport))
 		// 设置代理特定配置
 		switch proxyType {
+		case model.ProxyTypeAnyTLS:
+			p.Domain = strings.TrimSpace(req.Domain)
 		case model.ProxyTypeNaive:
 			p.Domain = strings.TrimSpace(req.Domain)
 			p.AutoACME = req.AutoACME
@@ -621,6 +627,10 @@ func (e *portValidationError) Unwrap() error { return e.err }
 
 func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Port           *int    `json:"port"`
+		Protocol       *string `json:"protocol"`
+		Username       *string `json:"username"`
+		Password       *string `json:"password"`
 		Enabled        *bool   `json:"enabled"`
 		Label          *string `json:"label"`
 		Regenerate     bool    `json:"regenerate"`
@@ -628,6 +638,8 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 		BandwidthLimit *int64  `json:"bandwidthLimit"`
 		ResetTraffic   bool    `json:"resetTraffic"`
 		// 新增字段用于更新代理配置
+		TLSFingerprint  *string `json:"tlsFingerprint"`
+		NaiveTransport  *string `json:"naiveTransport"`
 		Domain          *string `json:"domain"`
 		TLSCert         *string `json:"tlsCert"`
 		TLSKey          *string `json:"tlsKey"`
@@ -647,6 +659,39 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 			return errNodeNotFound
 		}
 		wasManaged, prevAddr := p.BackendManaged, p.BackendAddr
+		if req.Port != nil {
+			if *req.Port < model.MinListenPort(p.ProxyType) || *req.Port > 65535 {
+				return &portValidationError{fmt.Errorf("监听端口超出范围")}
+			}
+			for _, other := range n.Ports {
+				if other.ID != p.ID && other.Port == *req.Port {
+					return &portValidationError{fmt.Errorf("监听端口已被其他入口占用")}
+				}
+			}
+			p.Port = *req.Port
+		}
+		if req.Protocol != nil {
+			proto := strings.ToUpper(strings.TrimSpace(*req.Protocol))
+			if proto != model.ProtocolTCP && proto != model.ProtocolUDP {
+				return &portValidationError{fmt.Errorf("协议必须是 TCP 或 UDP")}
+			}
+			if model.NormalizeProxyType(p.ProxyType) != model.ProxyTypeMieru && proto != model.ProtocolTCP {
+				return &portValidationError{fmt.Errorf("该代理类型仅支持 TCP")}
+			}
+			p.Protocol = proto
+		}
+		if req.Username != nil {
+			if strings.TrimSpace(*req.Username) == "" {
+				return &portValidationError{fmt.Errorf("用户名不能为空")}
+			}
+			p.Username = strings.TrimSpace(*req.Username)
+		}
+		if req.Password != nil {
+			if *req.Password == "" {
+				return &portValidationError{fmt.Errorf("密码不能为空")}
+			}
+			p.Password = *req.Password
+		}
 		if model.NormalizeProxyType(p.ProxyType) != model.ProxyTypeMieru && req.TrafficLimit != nil && *req.TrafficLimit > 0 {
 			return &portValidationError{fmt.Errorf("当前仅 Mieru 支持流量统计和月度限额，%s 尚不支持", p.ProxyType)}
 		}
@@ -684,6 +729,12 @@ func (s *Server) handleUpdatePort(w http.ResponseWriter, r *http.Request) {
 			p.AutoDisabled = true
 		}
 
+		if req.TLSFingerprint != nil {
+			p.TLSFingerprint = strings.ToLower(strings.TrimSpace(*req.TLSFingerprint))
+		}
+		if req.NaiveTransport != nil {
+			p.NaiveTransport = strings.ToLower(strings.TrimSpace(*req.NaiveTransport))
+		}
 		// 更新代理特定配置
 		if req.Domain != nil {
 			p.Domain = strings.TrimSpace(*req.Domain)
@@ -1274,7 +1325,6 @@ func classifyCertExpiry(daysToExpire int) (CertExpiryLevel, string) {
 	}
 }
 
-
 // handleTestNode 测试节点连通性
 func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 	n := s.store.Node(r.PathValue("id"))
@@ -1308,6 +1358,18 @@ func (s *Server) handleTestPort(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	result := s.TestPort(ctx, n, port)
+	if port.Enabled && len(result.Errors) == 0 {
+		result.ProxyTest = s.probeProxy(ctx, n, port)
+		if result.ProxyTest != nil {
+			result.ProtocolVerified = result.ProxyTest.Reachable
+			if result.ProxyTest.Reachable {
+				result.Status = "verified"
+			} else {
+				result.Status = "failed"
+				result.Errors = append(result.Errors, result.ProxyTest.Error)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -1364,7 +1426,6 @@ type CertStatusResponse struct {
 	ACMEStatus   *model.ACMEStatus `json:"acmeStatus,omitempty"`
 	ACMEDisabled bool              `json:"acmeDisabled,omitempty"` // True when AutoACME is off
 }
-
 
 // validateCertAndKey 验证证书和密钥的有效性
 // All certificate entry points use the same deployment checks, including PATCH.

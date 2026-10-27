@@ -57,12 +57,14 @@ type Port struct {
 	AutoDisabled   bool      `json:"autoDisabled,omitempty"`   // Disabled automatically after exceeding the limit
 
 	// Proxy-specific configuration
-	TLSCert       string `json:"tlsCert,omitempty"`       // TLS certificate (for naive proxy)
-	TLSKey        string `json:"tlsKey,omitempty"`        // TLS private key (for naive proxy)
-	Domain        string `json:"domain,omitempty"`        // Domain name for ACME or SNI
-	HandshakeAddr string `json:"handshakeAddr,omitempty"` // Handshake server for ShadowTLS
-	AutoACME      bool   `json:"autoACME,omitempty"`      // Enable automatic ACME certificate
-	ACMEStaging   bool   `json:"acmeStaging,omitempty"`   // Use Let's Encrypt staging CA (for testing)
+	TLSCert        string `json:"tlsCert,omitempty"`        // TLS certificate (for naive proxy)
+	TLSKey         string `json:"tlsKey,omitempty"`         // TLS private key (for naive proxy)
+	Domain         string `json:"domain,omitempty"`         // Domain name for ACME or SNI
+	TLSFingerprint string `json:"tlsFingerprint,omitempty"` // AnyTLS client TLS fingerprint; empty preserves chrome.
+	NaiveTransport string `json:"naiveTransport,omitempty"` // https (default) or quic; server supports both.
+	HandshakeAddr  string `json:"handshakeAddr,omitempty"`  // Handshake server for ShadowTLS
+	AutoACME       bool   `json:"autoACME,omitempty"`       // Enable automatic ACME certificate
+	ACMEStaging    bool   `json:"acmeStaging,omitempty"`    // Use Let's Encrypt staging CA (for testing)
 	// BackendAddr is the data server that ShadowTLS relays decrypted traffic to
 	// (for example a shadowsocks instance reachable at 127.0.0.1:8388).
 	BackendAddr string `json:"backendAddr,omitempty"`
@@ -314,4 +316,3 @@ type ACMEStatus struct {
 	LastError    string    `json:"lastError,omitempty"`    // Last error message if failed
 	RenewalCount int       `json:"renewalCount,omitempty"` // Number of successful renewals observed
 }
-

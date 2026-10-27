@@ -137,6 +137,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST "+p+"/api/nodes/{id}/ports/{pid}/retry", s.auth(s.auditMutation(s.handleRetryPortSync)))
 	s.mux.Handle("POST "+p+"/api/nodes/{id}/ports/{pid}/cert", s.auth(s.auditMutation(s.handleUploadCert)))
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/ports/{pid}/cert", s.auth(s.handleGetCertInfo))
+	s.mux.Handle("GET "+p+"/api/nodes/{id}/ports/{pid}/client.json", s.auth(s.handlePortClientConfig))
 	s.mux.Handle("POST "+p+"/api/nodes/{id}/test", s.auth(s.handleTestNode))
 	s.mux.Handle("POST "+p+"/api/nodes/{id}/ports/{pid}/test", s.auth(s.handleTestPort))
 	s.mux.Handle("GET "+p+"/api/nodes/{id}/config", s.auth(s.handleGetNodeConfig))

@@ -56,6 +56,11 @@ func Validate(p *model.Port) error {
 	if strings.TrimSpace(p.Password) == "" {
 		return fmt.Errorf("AnyTLS 需要密码")
 	}
+	switch p.EffectiveTLSFingerprint() {
+	case "chrome", "firefox":
+	default:
+		return fmt.Errorf("AnyTLS TLS 指纹必须是 chrome 或 firefox")
+	}
 	return nil
 }
 
@@ -87,7 +92,12 @@ func SimpleLink(n *model.Node, p *model.Port) string {
 		User:   url.User(p.Password),
 		Host:   fmt.Sprintf("%s:%d", host, p.Port),
 		// anytls-go generates an ephemeral self-signed certificate on startup.
-		RawQuery: url.Values{"insecure": {"1"}, "allowInsecure": {"1"}}.Encode(),
+		RawQuery: url.Values{"insecure": {"1"}, "allowInsecure": {"1"}, "fp": {p.EffectiveTLSFingerprint()}}.Encode(),
+	}
+	if sni := strings.TrimSpace(p.Domain); sni != "" {
+		q := u.Query()
+		q.Set("sni", sni)
+		u.RawQuery = q.Encode()
 	}
 	if label := strings.TrimSpace(p.Label); label != "" {
 		u.Fragment = label

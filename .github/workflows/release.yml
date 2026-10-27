@@ -24,6 +24,12 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Test and vet
+        run: |
+          go test ./...
+          go vet ./...
+          node --check internal/manager/web/assets/app.js
+
       - name: Get version
         id: version
         run: |
@@ -101,66 +107,18 @@ jobs:
           cat SHA256SUMS
 
       - name: Generate release notes
-        id: release_notes
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          COMMIT_HASH: ${{ steps.version.outputs.COMMIT_HASH }}
+          BUILD_TIME: ${{ steps.version.outputs.BUILD_TIME }}
         run: |
-          cat > release_notes.md << 'EOF'
-          ## 🎉 MieruPilot ${{ steps.version.outputs.VERSION }}
-
-          ### ✨ 新特性
-
-           - 📊 **真实流量统计**：通过 mita metrics 采集每个端口的上下行使用量
-           - 🚦 **月度限额与自动停用**：达到限额后自动停用端口，重置或调整限额后恢复
-           - 🔄 **自动/月度与手动重置**：Manager 持久化累计流量，兼容 mita 重启后的计数变化
-           - 🧹 **节点远程清理**：删除节点时自动停止并删除远程 Agent、所有 mita 端口实例与账号，完成后 Agent 自移除
-
-           ### ⚠️ 功能说明
-
-           - mita 当前不提供可靠的服务端速率限制，带宽限制字段保留兼容性但暂不生效
-
-          ### 🔧 改进
-
-           - 清理期间阻止旧同步任务覆盖清理指令，Manager 重启后仍保留清理任务
-           - 清理失败自动重试并显示原因
-
-          ### 📦 下载说明
-
-          根据你的系统选择对应的版本：
-
-          | 平台 | 架构 | Manager | Agent |
-          |------|------|---------|-------|
-          | Linux | x86_64 | `merit-manager-linux-amd64` | `merit-agent-linux-amd64` |
-          | Linux | ARM64 | `merit-manager-linux-arm64` | `merit-agent-linux-arm64` |
-          | Windows | x86_64 | `merit-manager-windows-amd64.exe` | - |
-          | macOS | Intel | `merit-manager-darwin-amd64` | - |
-          | macOS | Apple Silicon | `merit-manager-darwin-arm64` | - |
-
-          ### 🚀 快速安装
-
-          使用一键脚本安装或更新：
-
-          ```bash
-          bash <(curl -fsSL https://github.com/HlONGlin/MieruPilot/raw/main/one-click.sh)
-          ```
-
-          ### ✅ 校验文件完整性
-
-          下载后请验证文件哈希值：
-
-          ```bash
-          sha256sum -c SHA256SUMS
-          ```
-
-          ### 📖 完整文档
-
-          查看 [README.md](https://github.com/HlONGlin/MieruPilot#readme) 获取详细使用说明。
-
-          ---
-
-          **构建信息**
-          - 版本：${{ steps.version.outputs.VERSION }}
-          - 提交：${{ steps.version.outputs.COMMIT_HASH }}
-          - 时间：${{ steps.version.outputs.BUILD_TIME }}
-          EOF
+          notes="docs/RELEASE_NOTES_${VERSION}.md"
+          if [ -f "$notes" ]; then
+            cp "$notes" release_notes.md
+          else
+            printf '## UnifiedProxy %s\n\nSee README.md for installation and upgrade instructions.\n' "$VERSION" > release_notes.md
+          fi
+          printf '\n\nBuild: %s / %s / %s\n' "$VERSION" "$COMMIT_HASH" "$BUILD_TIME" >> release_notes.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -175,6 +133,7 @@ jobs:
             dist/merit-agent-linux-arm64
             dist/SHA256SUMS
           body_path: release_notes.md
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false
         env:

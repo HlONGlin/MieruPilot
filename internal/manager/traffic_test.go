@@ -22,12 +22,16 @@ func TestUpdatePortTrafficAccumulatesDelta(t *testing.T) {
 }
 
 func TestUpdatePortTrafficDisablesAtLimitAndResetReenables(t *testing.T) {
-	p := &model.Port{TrafficLimit: 100, TrafficResetAt: time.Now(), Enabled: true}
-	if !updatePortTraffic(p, 100, time.Now()) || p.Enabled || !p.AutoDisabled {
+	now := time.Now()
+	p := &model.Port{TrafficLimit: 100, TrafficResetAt: now, Enabled: true}
+	if !updatePortTraffic(p, 100, now) || p.Enabled || !p.AutoDisabled {
 		t.Fatalf("expected automatic disable: %+v", p)
 	}
-	p.TrafficResetAt = time.Now().AddDate(0, -1, 0)
-	if !updatePortTraffic(p, 100, time.Now()) || !p.Enabled || p.AutoDisabled || p.TrafficUsed != 0 {
+	// Use the first day of the previous month so the test remains valid across
+	// month lengths and at any time of day.
+	previousMonth := time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, now.Location())
+	p.TrafficResetAt = previousMonth
+	if !updatePortTraffic(p, 100, now) || !p.Enabled || p.AutoDisabled || p.TrafficUsed != 0 {
 		t.Fatalf("expected monthly reset and re-enable: %+v", p)
 	}
 }

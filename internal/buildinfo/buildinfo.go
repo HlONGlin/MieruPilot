@@ -8,7 +8,7 @@ import (
 
 // These variables can be set at build time via -ldflags
 var (
-	Version   = "1.6.2"
+	Version   = "1.6.3"
 	Commit    = ""
 	BuildTime = ""
 )
@@ -56,7 +56,7 @@ func String() string {
 // GetVersion returns the version string.
 func GetVersion() string {
 	if Version == "" || Version == "dev" {
-		return "1.6.2"
+		return "1.6.3"
 	}
 	return Version
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"merit/internal/model"
+	"merit/internal/proxy/shadowsocks"
 )
 
 func TestAssetName(t *testing.T) {
@@ -127,10 +128,13 @@ func TestHandshakeDefault(t *testing.T) {
 func TestSimpleLink(t *testing.T) {
 	node := &model.Node{Address: "192.0.2.7"}
 	port := &model.Port{
-		Port:          443,
-		Password:      "se cret",
-		HandshakeAddr: "cloudflare.com:443",
-		BackendAddr:   "127.0.0.1:8388",
+		Port:            443,
+		Password:        "tls secret",
+		HandshakeAddr:   "cloudflare.com:443",
+		BackendAddr:     "127.0.0.1:8388",
+		BackendPassword: "ss secret",
+		BackendCipher:   "chacha20-ietf-poly1305",
+		Label:           "我的节点",
 	}
 
 	link := SimpleLink(node, port)
@@ -138,20 +142,56 @@ func TestSimpleLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SimpleLink() = %q is not a valid URL: %v", link, err)
 	}
-	if parsed.Scheme != "shadowtls" {
-		t.Errorf("scheme = %q, want shadowtls", parsed.Scheme)
+	if parsed.Scheme != "ss" {
+		t.Errorf("scheme = %q, want ss", parsed.Scheme)
 	}
 	if parsed.Host != "192.0.2.7:443" {
 		t.Errorf("host = %q, want 192.0.2.7:443", parsed.Host)
 	}
-	if parsed.User == nil || parsed.User.Username() != port.Password {
-		t.Errorf("userinfo = %v, want the password", parsed.User)
+	if parsed.User == nil || parsed.User.Username() != port.BackendCipher {
+		t.Errorf("userinfo username = %v, want the backend cipher", parsed.User)
+	}
+	if password, ok := parsed.User.Password(); !ok || password != port.BackendPassword {
+		t.Errorf("userinfo password = %q, want the backend password", password)
 	}
 	query := parsed.Query()
-	if query.Get("handshake") != "cloudflare.com:443" {
-		t.Errorf("handshake = %q", query.Get("handshake"))
+	if got, want := query.Get("plugin"), "shadow-tls;host=cloudflare.com;password=tls secret;version=3"; got != want {
+		t.Errorf("plugin = %q, want %q", got, want)
 	}
-	if query.Get("version") != "3" {
-		t.Errorf("version = %q, want 3", query.Get("version"))
+	if parsed.Fragment != "我的节点" {
+		t.Errorf("fragment = %q, want the label", parsed.Fragment)
+	}
+}
+
+func TestSimpleLinkRequiresBackendPassword(t *testing.T) {
+	node := &model.Node{Address: "192.0.2.7"}
+	port := &model.Port{Port: 443, Password: "tls-secret", HandshakeAddr: "cloudflare.com:443"}
+	if got := SimpleLink(node, port); got != "" {
+		t.Errorf("SimpleLink() = %q, want empty without backend credentials", got)
+	}
+}
+
+func TestSimpleLinkDefaultsBackendCipherAndSupportsIPv6(t *testing.T) {
+	node := &model.Node{Address: "2001:db8::7"}
+	port := &model.Port{
+		Port:            443,
+		Password:        "tls/p@ss?#",
+		HandshakeAddr:   "www.example.com:443",
+		BackendPassword: "ss/p@ss?#",
+	}
+
+	link := SimpleLink(node, port)
+	parsed, err := url.Parse(link)
+	if err != nil {
+		t.Fatalf("SimpleLink() = %q is not a valid URL: %v", link, err)
+	}
+	if parsed.Host != "[2001:db8::7]:443" {
+		t.Errorf("host = %q, want bracketed IPv6 host", parsed.Host)
+	}
+	if parsed.User.Username() != shadowsocks.DefaultCipher {
+		t.Errorf("cipher = %q, want %q", parsed.User.Username(), shadowsocks.DefaultCipher)
+	}
+	if got, want := parsed.Query().Get("plugin"), "shadow-tls;host=www.example.com;password=tls/p@ss?#;version=3"; got != want {
+		t.Errorf("plugin = %q, want %q", got, want)
 	}
 }

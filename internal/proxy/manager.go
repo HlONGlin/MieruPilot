@@ -46,8 +46,9 @@ func GetProxyType(p *model.Port) string {
 }
 
 // GenerateShareLink generates a share link for the given node and port. NaïveProxy
-// needs both the username and the password, AnyTLS and ShadowTLS only the
-// password, so each protocol renders its own URI with proper escaping.
+// needs both the username and the password, AnyTLS carries its own password,
+// and ShadowTLS is represented as an ss:// link with backend and plugin
+// credentials, so each protocol renders its own URI with proper escaping.
 func GenerateShareLink(n *model.Node, p *model.Port) string {
 	switch GetProxyType(p) {
 	case model.ProxyTypeNaive:

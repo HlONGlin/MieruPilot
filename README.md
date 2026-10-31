@@ -8,7 +8,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](go.mod)
 [![Release](https://img.shields.io/github/v/release/HlONGlin/UnifiedProxy)](https://github.com/HlONGlin/UnifiedProxy/releases)
 
-> **📢 v1.6.2 已发布** - 修复代理客户端配置导出，新增端口详情/测试/编辑、AnyTLS SNI/指纹及 NaïveProxy QUIC。详见 [发布说明](docs/RELEASE_NOTES_v1.6.2.md)
+> **📢 v1.6.3 已发布** - 优化 ShadowTLS 分享链接，兼容 SS + shadow-tls 插件格式，并保留 v1.6.2 的客户端配置导出和端口管理功能。详见 [发布说明](docs/RELEASE_NOTES_v1.6.3.md)
 > 
 > **🛡️ 生产加固计划** - 查看 [生产加固路线图](docs/PRODUCTION_HARDENING_ROADMAP.md) 了解更多改进
 

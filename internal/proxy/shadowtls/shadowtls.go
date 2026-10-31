@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"merit/internal/model"
+	"merit/internal/proxy/shadowsocks"
 )
 
 const (
@@ -111,10 +112,13 @@ func ServerArgs(p *model.Port) []string {
 	}
 }
 
-// SimpleLink builds a shadowtls:// transport URI. ShadowTLS does not carry proxy
-// credentials of its own: a client additionally needs the shadowsocks account of
-// the backend data server, which is why the link only describes the transport.
+// SimpleLink builds an ss:// URI using the shadow-tls plugin. The SS userinfo
+// carries the backend cipher/password, while the plugin carries the ShadowTLS
+// handshake host, TLS password, and protocol version.
 func SimpleLink(n *model.Node, p *model.Port) string {
+	if p == nil || strings.TrimSpace(p.BackendPassword) == "" {
+		return ""
+	}
 	host := hostOf(n)
 
 	// 无法确定地址时返回空字符串
@@ -122,11 +126,21 @@ func SimpleLink(n *model.Node, p *model.Port) string {
 		return ""
 	}
 
+	cipher := strings.TrimSpace(p.BackendCipher)
+	if cipher == "" {
+		cipher = shadowsocks.DefaultCipher
+	}
+	plugin := strings.Join([]string{
+		"shadow-tls",
+		"host=" + HandshakeHost(Handshake(p)),
+		"password=" + strings.TrimSpace(p.Password),
+		"version=3",
+	}, ";")
 	u := &url.URL{
-		Scheme:   "shadowtls",
-		User:     url.User(p.Password),
+		Scheme:   "ss",
+		User:     url.UserPassword(cipher, p.BackendPassword),
 		Host:     fmt.Sprintf("%s:%d", host, p.Port),
-		RawQuery: url.Values{"handshake": []string{Handshake(p)}, "version": []string{"3"}}.Encode(),
+		RawQuery: url.Values{"plugin": []string{plugin}}.Encode(),
 	}
 	if label := strings.TrimSpace(p.Label); label != "" {
 		u.Fragment = label
